@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  trading-bot:
+    build: .
+    container_name: trading_bot_quant
+    restart: always
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    volumes:
+      - ./trading_bot.log:/app/trading_bot.log
+      - ./trades_state.json:/app/trades_state.json
+

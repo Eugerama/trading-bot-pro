@@ -1,0 +1,1772 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ active_ticker }} | AI Quantitative Trading Bot</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js para Monte Carlo y ML -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- TradingView TV.js Library para Estudios Técnicos Nativos (RSI, MACD) -->
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <style>
+        body {
+            background-color: #0b0f19;
+            color: #f1f5f9;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+        }
+        .custom-scroll::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        .tradingview-container {
+            height: 540px;
+            width: 100%;
+            background: #0f172a;
+            position: relative;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 38px;
+            height: 20px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #334155;
+            transition: .3s;
+            border-radius: 20px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 14px;
+            width: 14px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #06b6d4;
+        }
+        input:checked + .slider:before {
+            transform: translateX(18px);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col custom-scroll">
+
+    <!-- BARRA SUPERIOR DE NAVEGACIÓN -->
+    <header class="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-50 backdrop-blur-md px-6 py-3">
+        <div class="max-w-[1700px] mx-auto flex flex-wrap items-center justify-between gap-4">
+            
+            <!-- Logo y Estado de la VM -->
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                    <i class="fa-solid fa-robot text-lg text-white"></i>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="font-bold text-base tracking-wide text-white">QUANTITATIVE TRADING BOT</span>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> GCP VM 24/7
+                        </span>
+                        <button onclick="toggleAutoTradeTop()" id="top-autotrade-btn"
+                            class="px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1 hover:bg-cyan-500/30 transition">
+                            <i class="fa-solid fa-bolt"></i> Auto-Trade: <b id="top-autotrade-status">ACTIVO</b>
+                        </button>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Random Forest • Diebold-Mariano • Monte Carlo • Gemini NLP Sentiment</p>
+                </div>
+            </div>
+
+            <!-- Buscador de Tickers y Accesos Rápidos -->
+            <div class="flex items-center gap-2">
+                <form method="GET" action="/" class="flex items-center">
+                    <div class="relative">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400 text-xs">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </span>
+                        <input type="text" name="ticker" id="ticker-input" value="{{ active_ticker }}" placeholder="Buscar ticker (ej. BTC, NVDA)..."
+                            class="bg-slate-950 border border-slate-700 rounded-l-lg py-1.5 pl-8 pr-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 w-44 uppercase transition">
+                    </div>
+                    <button type="submit" class="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-1.5 text-xs font-semibold rounded-r-lg transition">
+                        Buscar
+                    </button>
+                </form>
+
+                <!-- Accesos Rápidos -->
+                <div class="hidden lg:flex items-center gap-1 text-xs">
+                    <a href="/?ticker=BTCUSDT" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'BTCUSDT' or active_ticker == 'BTC' %}border border-cyan-500 text-cyan-400{% endif %}">BTC</a>
+                    <a href="/?ticker=ETHUSDT" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'ETHUSDT' or active_ticker == 'ETH' %}border border-cyan-500 text-cyan-400{% endif %}">ETH</a>
+                    <a href="/?ticker=SOLUSDT" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'SOLUSDT' or active_ticker == 'SOL' %}border border-cyan-500 text-cyan-400{% endif %}">SOL</a>
+                    <a href="/?ticker=NVDA" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'NVDA' %}border border-cyan-500 text-cyan-400{% endif %}">NVDA</a>
+                    <a href="/?ticker=AAPL" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'AAPL' %}border border-cyan-500 text-cyan-400{% endif %}">AAPL</a>
+                    <a href="/?ticker=SPY" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 {% if active_ticker == 'SPY' %}border border-cyan-500 text-cyan-400{% endif %}">SPY</a>
+                </div>
+            </div>
+
+            <!-- Usuario y Sesión -->
+            <div class="flex items-center gap-3">
+                <button onclick="switchTab('tab-settings')" title="Configuración Personalizada" class="p-2 rounded-lg bg-slate-800 hover:bg-cyan-900/40 text-slate-300 hover:text-cyan-400 border border-slate-700 transition text-xs flex items-center gap-1.5">
+                    <i class="fa-solid fa-sliders"></i> <span class="hidden sm:inline">Configuración</span>
+                </button>
+                <div class="text-right hidden sm:block">
+                    <span class="block text-xs font-semibold text-slate-200"><i class="fa-solid fa-user-circle text-cyan-400 mr-1"></i>{{ username }}</span>
+                    <span class="block text-[10px] text-slate-500">Sesión Institucional</span>
+                </div>
+                <a href="/logout" title="Cerrar Sesión" class="p-2 rounded-lg bg-slate-800 hover:bg-rose-900/40 text-slate-400 hover:text-rose-400 border border-slate-700 transition text-xs">
+                    <i class="fa-solid fa-right-from-bracket"></i>
+                </a>
+            </div>
+
+        </div>
+    </header>
+
+    <!-- CONTENIDO PRINCIPAL -->
+    <main class="flex-1 max-w-[1700px] w-full mx-auto p-4 sm:p-6 space-y-5">
+
+        <!-- 1. FILA DE MÉTRICAS CUANTITATIVAS (KPIs) -->
+        <section class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+            <!-- Win Rate -->
+            <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl shadow-lg relative overflow-hidden">
+                <div class="flex items-center justify-between text-slate-400 text-xs mb-1 font-medium">
+                    <span>WIN RATE</span>
+                    <i class="fa-solid fa-trophy text-amber-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi-win-rate" class="text-2xl font-bold text-white">--%</span>
+                    <span id="kpi-trades-count" class="text-[11px] text-slate-400">(0 trades)</span>
+                </div>
+                <div class="w-full bg-slate-800 h-1.5 rounded-full mt-2 overflow-hidden">
+                    <div id="kpi-win-bar" class="bg-gradient-to-r from-emerald-500 to-cyan-500 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Profit Factor -->
+            <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl shadow-lg">
+                <div class="flex items-center justify-between text-slate-400 text-xs mb-1 font-medium">
+                    <span>PROFIT FACTOR</span>
+                    <i class="fa-solid fa-scale-balanced text-cyan-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi-profit-factor" class="text-2xl font-bold text-emerald-400">--</span>
+                    <span class="text-[10px] text-emerald-500/80 font-semibold px-1.5 py-0.5 bg-emerald-500/10 rounded">Alta Asimetría</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1.5">Ratio Ganancias / Pérdidas Brutas</p>
+            </div>
+
+            <!-- Ganancia Acumulada -->
+            <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl shadow-lg">
+                <div class="flex items-center justify-between text-slate-400 text-xs mb-1 font-medium">
+                    <span>GANANCIA ACUMULADA</span>
+                    <i class="fa-solid fa-wallet text-emerald-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi-accumulated-profit" class="text-2xl font-bold text-white">$0.00</span>
+                    <span id="kpi-accumulated-pct" class="text-xs font-semibold text-emerald-400">+0.0%</span>
+                </div>
+                <p class="text-[11px] text-slate-500 mt-1.5">Rendimiento Total Neto</p>
+            </div>
+
+            <!-- Equidad y Balance -->
+            <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl shadow-lg">
+                <div class="flex items-center justify-between text-slate-400 text-xs mb-1 font-medium">
+                    <span>EQUIDAD TOTAL</span>
+                    <i class="fa-solid fa-coins text-blue-400"></i>
+                </div>
+                <div class="flex items-baseline gap-2">
+                    <span id="kpi-equity" class="text-2xl font-bold text-white">$10,000.00</span>
+                </div>
+                <p id="kpi-unrealized" class="text-[11px] text-slate-400 mt-1.5">PnL Flotante: <span class="text-slate-300">$0.00</span></p>
+            </div>
+
+            <!-- Sharpe Ratio & Max Drawdown -->
+            <div class="bg-slate-900/80 border border-slate-800 p-4 rounded-xl shadow-lg">
+                <div class="flex items-center justify-between text-slate-400 text-xs mb-1 font-medium">
+                    <span>SHARPE / DRAWDOWN</span>
+                    <i class="fa-solid fa-shield-halved text-purple-400"></i>
+                </div>
+                <div class="flex items-baseline justify-between">
+                    <div>
+                        <span class="text-xs text-slate-400 block">Sharpe:</span>
+                        <span id="kpi-sharpe" class="text-xl font-bold text-purple-300">--</span>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-xs text-slate-400 block">Max DD:</span>
+                        <span id="kpi-drawdown" class="text-xl font-bold text-rose-400">--%</span>
+                    </div>
+                </div>
+                <p class="text-[10px] text-slate-500 mt-1">Riesgo Acotado por ATR</p>
+            </div>
+        </section>
+
+        <!-- 1.5 BARRA DE WATCHLIST DINÁMICA & ESCÁNER ACTIVO -->
+        <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-xl bg-gradient-to-tr from-cyan-500/20 to-blue-500/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center text-sm shadow">
+                        <i class="fa-solid fa-binoculars"></i>
+                    </div>
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Watchlist Dinámica & Escáner del Bot</h3>
+                            <span class="text-[10px] px-2 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 font-semibold">
+                                <span id="wl-count-label">5</span> Activos Vigilados
+                            </span>
+                        </div>
+                        <p class="text-[11px] text-slate-400">El bot escanea continuamente esta lista para encontrar confluencias de Machine Learning y abrir trades automáticos.</p>
+                    </div>
+                </div>
+
+                <!-- Input para Añadir Ticker a la Watchlist -->
+                <div class="flex items-center gap-2">
+                    <div class="relative">
+                        <input type="text" id="add-watchlist-input" placeholder="Ej. DOGE, TSLA, SOL..."
+                            class="bg-slate-950 border border-slate-700 rounded-lg py-1.5 pl-3 pr-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 uppercase w-40">
+                    </div>
+                    <button onclick="addTickerToWatchlist()" class="px-3 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold rounded-lg shadow transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-plus text-[10px]"></i> Agregar Activo
+                    </button>
+                    <button onclick="addCurrentTickerToWatchlist()" title="Agregar el ticker actual a la Watchlist" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs font-semibold rounded-lg transition flex items-center gap-1">
+                        <i class="fa-solid fa-star text-amber-400"></i> + {{ active_ticker }}
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chips Dinámicos de Activos Monitoreados con Precio en Vivo -->
+            <div id="watchlist-chips-container" class="flex flex-wrap items-center gap-2 pt-1 min-h-[38px]">
+                <span class="text-xs text-slate-500 italic">Cargando watchlist de mercado...</span>
+            </div>
+        </section>
+
+        <!-- 2. GRID PRINCIPAL (GRÁFICO TRADINGVIEW + PANEL DE SEÑALES / GEMINI) -->
+        <section class="grid grid-cols-1 xl:grid-cols-12 gap-5">
+
+            <!-- COLUMNA IZQUIERDA: TRADINGVIEW + PESTAÑAS (8 de 12) -->
+            <div class="xl:col-span-8 space-y-4">
+                
+                <!-- Card de TradingView en Vivo (Solución Universal sin bloqueos) -->
+                <div class="bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                    <div class="px-4 py-3 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-chart-candlestick text-cyan-400"></i>
+                            <span class="text-sm font-bold text-white tracking-wide">TRADING VIEW INTERACTIVO: <span id="tv-current-symbol-label" class="text-cyan-400">{{ active_ticker }}</span></span>
+                            <span id="tv-status-badge" class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded font-semibold">Cargado en Vivo</span>
+                            <span class="hidden md:inline-flex items-center gap-1 text-[10px] bg-cyan-500/10 text-cyan-300 border border-cyan-500/20 px-2 py-0.5 rounded font-medium">
+                                <i class="fa-solid fa-chart-line text-[9px]"></i> Indicadores Activos: <b>RSI (14) + MACD (12, 26, 9)</b>
+                            </span>
+                        </div>
+                        <div class="text-xs text-slate-400 flex items-center gap-2">
+                            <span>Símbolo: <code id="tv-resolved-symbol" class="text-slate-300 font-mono">--</code></span>
+                            <button onclick="reloadTradingView()" title="Recargar gráfica" class="p-1 px-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">
+                                <i class="fa-solid fa-arrows-rotate"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- TradingView Widget Iframe Container (Garantizado que no se congela en Binance) -->
+                    <div class="tradingview-container" id="tv_frame_wrapper">
+                        <!-- El iframe se inyecta dinámicamente con resolución automática del símbolo -->
+                    </div>
+                </div>
+
+                <!-- NAVEGACIÓN POR PESTAÑAS -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+                    
+                    <!-- Botones de Pestañas -->
+                    <div class="flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto text-xs font-semibold">
+                        <button onclick="switchTab('tab-positions')" id="btn-tab-positions"
+                            class="tab-btn px-3 py-2 rounded-lg bg-cyan-600 text-white flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-layer-group"></i> Posiciones Activas (<span id="tab-pos-count">0</span>)
+                        </button>
+                        <button onclick="switchTab('tab-history')" id="btn-tab-history"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-clock-rotate-left"></i> Vista Histórica de Trades
+                        </button>
+                        <button onclick="switchTab('tab-montecarlo')" id="btn-tab-montecarlo"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-dice"></i> Simulación Monte Carlo
+                        </button>
+                        <button onclick="switchTab('tab-ml')" id="btn-tab-ml"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-brain"></i> Machine Learning & Diebold-Mariano
+                        </button>
+                        <button onclick="switchTab('tab-watchlist')" id="btn-tab-watchlist"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-binoculars text-cyan-400"></i> Watchlist (<span id="tab-wl-count">0</span>)
+                        </button>
+                        <button onclick="switchTab('tab-settings')" id="btn-tab-settings"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-sliders text-cyan-400"></i> Configuración de Métricas
+                        </button>
+                        <button onclick="switchTab('tab-vm')" id="btn-tab-vm"
+                            class="tab-btn px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center gap-1.5 transition">
+                            <i class="fa-solid fa-server"></i> Monitoreo VM Google Cloud
+                        </button>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 1: POSICIONES ACTIVAS -->
+                    <div id="tab-positions" class="tab-content pt-4">
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs text-slate-300">
+                                <thead class="text-[11px] uppercase bg-slate-950/70 text-slate-400 border-b border-slate-800">
+                                    <tr>
+                                        <th class="py-2.5 px-3">Ticker</th>
+                                        <th class="py-2.5 px-3">Lado</th>
+                                        <th class="py-2.5 px-3">Entrada</th>
+                                        <th class="py-2.5 px-3">Precio Actual</th>
+                                        <th class="py-2.5 px-3">Tamaño</th>
+                                        <th class="py-2.5 px-3">Stop Loss</th>
+                                        <th class="py-2.5 px-3">Take Profit</th>
+                                        <th class="py-2.5 px-3">PnL Flotante</th>
+                                        <th class="py-2.5 px-3 text-center">Acción</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="active-positions-tbody" class="divide-y divide-slate-800/60">
+                                    <tr>
+                                        <td colspan="9" class="py-6 text-center text-slate-500">Cargando posiciones activas en la VM...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 2: VISTA HISTÓRICA DE TRADES -->
+                    <div id="tab-history" class="tab-content hidden pt-4">
+                        <div class="overflow-x-auto max-h-[400px] custom-scroll">
+                            <table class="w-full text-left text-xs text-slate-300">
+                                <thead class="text-[11px] uppercase bg-slate-950/70 text-slate-400 border-b border-slate-800 sticky top-0">
+                                    <tr>
+                                        <th class="py-2.5 px-3">Fecha Cierre</th>
+                                        <th class="py-2.5 px-3">Ticker</th>
+                                        <th class="py-2.5 px-3">Lado</th>
+                                        <th class="py-2.5 px-3">Entrada</th>
+                                        <th class="py-2.5 px-3">Salida</th>
+                                        <th class="py-2.5 px-3">PnL Neto ($)</th>
+                                        <th class="py-2.5 px-3">ROI (%)</th>
+                                        <th class="py-2.5 px-3">Motivo Salida</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="trade-history-tbody" class="divide-y divide-slate-800/60">
+                                    <!-- Renderizado vía JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 3: SIMULACIÓN MONTE CARLO -->
+                    <div id="tab-montecarlo" class="tab-content hidden pt-4 space-y-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+                            <div>
+                                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                                    <i class="fa-solid fa-dice-d20 text-purple-400"></i>
+                                    Simulación Estocástica de Trayectorias Futuras (Movimiento Browniano Geométrico)
+                                </h4>
+                                <p class="text-xs text-slate-400">1,000 caminos simulados para verificar la probabilidad de tocar Take Profit vs Stop Loss.</p>
+                            </div>
+                            <button onclick="loadMonteCarlo()" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold transition">
+                                <i class="fa-solid fa-arrows-rotate mr-1"></i> Recalcular Monte Carlo
+                            </button>
+                        </div>
+
+                        <!-- Gráfico Canvas de Monte Carlo -->
+                        <div class="h-[300px] w-full bg-slate-950 p-2 rounded-xl border border-slate-800">
+                            <canvas id="monteCarloChart"></canvas>
+                        </div>
+
+                        <!-- Métricas de Cola / Probabilidades -->
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Probabilidad Take Profit</span>
+                                <span id="mc-prob-tp" class="text-lg font-bold text-emerald-400">--%</span>
+                            </div>
+                            <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Probabilidad Stop Loss</span>
+                                <span id="mc-prob-sl" class="text-lg font-bold text-rose-400">--%</span>
+                            </div>
+                            <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Edge Ratio (P_tp / P_sl)</span>
+                                <span id="mc-edge-ratio" class="text-lg font-bold text-cyan-400">--x</span>
+                            </div>
+                            <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Value at Risk (VaR 95%)</span>
+                                <span id="mc-var-95" class="text-lg font-bold text-amber-400">--%</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 4: MACHINE LEARNING & DIEBOLD-MARIANO -->
+                    <div id="tab-ml" class="tab-content hidden pt-4 space-y-4">
+                        
+                        <!-- Tarjeta Destacada del Test de Diebold-Mariano -->
+                        <div class="bg-gradient-to-r from-blue-950/40 via-slate-900 to-indigo-950/40 border border-indigo-500/30 rounded-xl p-4">
+                            <div class="flex items-start justify-between">
+                                <div>
+                                    <span class="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-[10px] font-bold rounded uppercase tracking-wider border border-indigo-500/30">
+                                        Validación Cuantitativa Formal
+                                    </span>
+                                    <h4 class="text-base font-bold text-white mt-1.5 flex items-center gap-2">
+                                        Test de Validación Diebold-Mariano (Diebold & Mariano, 1995)
+                                    </h4>
+                                    <p class="text-xs text-slate-300 mt-1" id="dm-conclusion">
+                                        Evaluando hipótesis nula $H_0: E[d_t] = 0$ (misma precisión predictiva entre Random Forest y Modelo KNN/Benchmark)...
+                                    </p>
+                                </div>
+                                <div class="text-right">
+                                    <span class="text-xs text-slate-400 block">Estadístico DM corregido:</span>
+                                    <span id="dm-stat" class="text-xl font-bold text-cyan-400">--</span>
+                                    <span id="dm-pvalue" class="text-xs text-slate-400 block mt-0.5">p-valor: --</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tabla Comparativa de Simulación de Hiperparámetros -->
+                        <div>
+                            <h5 class="text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider flex items-center gap-1.5">
+                                <i class="fa-solid fa-table text-cyan-400"></i>
+                                Tabla Comparativa de Hiperparámetros del Random Forest (TimeSeriesSplit)
+                            </h5>
+                            <div class="overflow-x-auto max-h-[220px] custom-scroll">
+                                <table class="w-full text-left text-xs text-slate-300">
+                                    <thead class="text-[10px] uppercase bg-slate-950 text-slate-400 border-b border-slate-800">
+                                        <tr>
+                                            <th class="py-2 px-2.5">N_Estimators</th>
+                                            <th class="py-2 px-2.5">Max_Depth</th>
+                                            <th class="py-2 px-2.5">Min_Split</th>
+                                            <th class="py-2 px-2.5">Accuracy</th>
+                                            <th class="py-2 px-2.5">F1-Score</th>
+                                            <th class="py-2 px-2.5">RMSE</th>
+                                            <th class="py-2 px-2.5">MAE</th>
+                                            <th class="py-2 px-2.5">SMAPE (%)</th>
+                                            <th class="py-2 px-2.5">MAPE (%)</th>
+                                            <th class="py-2 px-2.5">Variance Score (R²)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="hp-simulation-tbody" class="divide-y divide-slate-800/60">
+                                        <!-- Renderizado vía JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Matriz de Confusión -->
+                        <div class="bg-slate-950/70 p-4 rounded-xl border border-slate-800">
+                            <h5 class="text-xs font-bold text-slate-300 mb-2 uppercase tracking-wider flex items-center gap-1.5">
+                                <i class="fa-solid fa-border-all text-purple-400"></i>
+                                Matriz de Confusión Out-of-Sample (SELL | HOLD | BUY)
+                            </h5>
+                            <div id="confusion-matrix-container" class="grid grid-cols-3 gap-2 text-center text-xs">
+                                <!-- Renderizado vía JS -->
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA: WATCHLIST DINÁMICA & ESCÁNER MULTIACTIVO -->
+                    <div id="tab-watchlist" class="tab-content hidden pt-4 space-y-4">
+                        <div class="bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 p-4 rounded-xl border border-slate-800 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                                    <i class="fa-solid fa-binoculars text-cyan-400"></i>
+                                    Radar de Activos Monitoreados 24/7 (Watchlist Dinámica)
+                                </h4>
+                                <p class="text-xs text-slate-400 mt-0.5">
+                                    El bot de trading en la VM analiza periódicamente estos activos. Criptomonedas se operan 24/7 y Acciones únicamente durante horario oficial de NYSE/NASDAQ (9:30 AM - 4:00 PM EST).
+                                </p>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button onclick="loadWatchlist()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                                    <i class="fa-solid fa-arrows-rotate"></i> Actualizar Precios
+                                </button>
+                                <button onclick="addCurrentTickerToWatchlist()" class="px-3 py-1.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 rounded-lg text-xs font-semibold transition flex items-center gap-1.5">
+                                    <i class="fa-solid fa-plus text-[10px]"></i> Añadir Ticker Actual ({{ active_ticker }})
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Tabla de Watchlist -->
+                        <div class="overflow-x-auto max-h-[360px] custom-scroll">
+                            <table class="w-full text-left text-xs text-slate-300">
+                                <thead class="text-[11px] uppercase bg-slate-950/80 text-slate-400 border-b border-slate-800 sticky top-0">
+                                    <tr>
+                                        <th class="py-2.5 px-3">Ticker</th>
+                                        <th class="py-2.5 px-3">Mercado / Tipo</th>
+                                        <th class="py-2.5 px-3">Estado Operativo</th>
+                                        <th class="py-2.5 px-3">Precio en Vivo</th>
+                                        <th class="py-2.5 px-3 text-center">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="watchlist-tbody" class="divide-y divide-slate-800/60">
+                                    <tr>
+                                        <td colspan="5" class="py-6 text-center text-slate-500">Cargando activos en el radar de la VM...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Consejos para la Defensa Oral -->
+                        <div class="bg-blue-950/30 border border-blue-500/20 rounded-xl p-3 text-xs text-slate-300 flex items-start gap-2.5">
+                            <i class="fa-solid fa-circle-info text-cyan-400 mt-0.5"></i>
+                            <div>
+                                <span class="font-bold text-white">Gestión Multicanal (Web + Telegram):</span>
+                                <span class="text-slate-400">
+                                    Puedes agregar o quitar tickers desde aquí o por Telegram con <code>/watch NVDA</code> o <code>/unwatch NVDA</code>. Al seleccionar <b>"Analizar en Gráfica"</b>, se actualizarán instantáneamente la gráfica de TradingView y las métricas de Random Forest y Monte Carlo para ese activo.
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 5: CONFIGURACIÓN PERSONALIZADA POR USUARIO -->
+                    <div id="tab-settings" class="tab-content hidden pt-4 space-y-5">
+                        <div class="bg-slate-950/70 p-4 rounded-xl border border-slate-800">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                                    <i class="fa-solid fa-sliders text-cyan-400"></i>
+                                    Personalización de Métricas & Estrategia Cuantitativa
+                                </h4>
+                                <span class="text-[11px] text-cyan-400">Usuario: <b>{{ username }}</b></span>
+                            </div>
+                            <p class="text-xs text-slate-400">
+                                Selecciona qué indicadores y módulos de inteligencia artificial deseas activar en tu bot. El algoritmo ponderará únicamente las métricas que marques activas.
+                            </p>
+                        </div>
+
+                        <!-- Grid de Selección de Métricas -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
+                            
+                            <!-- Toggle RSI -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-white block">RSI (Wilder 14)</span>
+                                    <span class="text-[11px] text-slate-400">Filtro de Sobrecompra / Sobreventa</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-rsi" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle MACD -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-white block">MACD & Signal (12, 26, 9)</span>
+                                    <span class="text-[11px] text-slate-400">Convergencia de Momentum</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-macd" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle Parabolic SAR -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-white block">SAR Parabólico</span>
+                                    <span class="text-[11px] text-slate-400">Puntos de Reversión y Trailing</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-sar" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle Regresión Lineal -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-white block">Regresión Lineal (Slope)</span>
+                                    <span class="text-[11px] text-slate-400">Pendiente de Tendencia OLS</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-lr" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle Estocástico -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-white block">Oscilador Estocástico</span>
+                                    <span class="text-[11px] text-slate-400">Líneas %K y %D</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-stoch" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle Machine Learning -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-cyan-300 block">Random Forest (ML)</span>
+                                    <span class="text-[11px] text-slate-400">Clasificador Predictivo Ensamble</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-ml" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle NLP Gemini -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-emerald-400 block">Sentimiento NLP Gemini</span>
+                                    <span class="text-[11px] text-slate-400">Filtro de Noticias y Veto</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-nlp" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <!-- Toggle Monte Carlo -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-purple-400 block">Monte Carlo (1,000 Caminos)</span>
+                                    <span class="text-[11px] text-slate-400">Distribución Estocástica VaR</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-mc" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                        </div>
+
+                        <!-- Parámetros Numéricos de Riesgo -->
+                        <div class="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-4">
+                            <h5 class="text-xs font-bold text-slate-300 uppercase tracking-wider">Parámetros Operativos & Gestión de Riesgo (Risk Management)</h5>
+                            
+                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Riesgo por Posición (% de Capital)</label>
+                                    <select id="cfg-risk-pct" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-cyan-500">
+                                        <option value="1.0">1.0% (Conservador Institucional)</option>
+                                        <option value="2.0" selected>2.0% (Recomendado Estándar)</option>
+                                        <option value="3.0">3.0% (Agresivo Moderado)</option>
+                                        <option value="5.0">5.0% (Alto Riesgo)</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Stop Loss Multiplicador ATR</label>
+                                    <select id="cfg-atr-sl" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-cyan-500">
+                                        <option value="1.0">1.0 x ATR (Ajustado)</option>
+                                        <option value="1.5" selected>1.5 x ATR (Óptimo)</option>
+                                        <option value="2.0">2.0 x ATR (Holgado)</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Take Profit Multiplicador ATR</label>
+                                    <select id="cfg-atr-tp" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-cyan-500">
+                                        <option value="2.0">2.0 x ATR (R/B = 1.33)</option>
+                                        <option value="2.5" selected>2.5 x ATR (R/B = 1.67)</option>
+                                        <option value="3.0">3.0 x ATR (R/B = 2.00)</option>
+                                    </select>
+                                </div>
+
+                                <div>
+                                    <label class="block text-slate-400 mb-1">Certeza Mínima Random Forest</label>
+                                    <select id="cfg-rf-threshold" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-white focus:outline-none focus:border-cyan-500">
+                                        <option value="45">45% (Más operaciones)</option>
+                                        <option value="55" selected>55% (Balance Calidad/Frecuencia)</option>
+                                        <option value="65">65% (Solo alta convicción)</option>
+                                        <option value="75">75% (Ultra estricto)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Botón Guardar Configuración -->
+                        <div class="flex items-center justify-between pt-1">
+                            <span id="cfg-save-feedback" class="text-xs text-emerald-400 font-semibold opacity-0 transition-opacity">
+                                <i class="fa-solid fa-check mr-1"></i> Preferencias guardadas y aplicadas al motor de trading.
+                            </span>
+                            <button onclick="saveUserSettings()" class="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-cyan-600/20 transition flex items-center gap-2">
+                                <i class="fa-solid fa-floppy-disk"></i> Guardar Preferencias del Bot
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- CONTENIDO DE PESTAÑA 6: MONITOREO VM Y CHATOPS -->
+                    <div id="tab-vm" class="tab-content hidden pt-4 space-y-4">
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">CPU Compute Engine</span>
+                                <span id="vm-cpu" class="text-lg font-bold text-cyan-400">--%</span>
+                            </div>
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Memoria RAM</span>
+                                <span id="vm-ram" class="text-lg font-bold text-purple-400">--%</span>
+                            </div>
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Disco Persistente</span>
+                                <span id="vm-disk" class="text-lg font-bold text-emerald-400">-- GB</span>
+                            </div>
+                        </div>
+
+                        <!-- Consola de Logs en Vivo -->
+                        <div>
+                            <div class="flex items-center justify-between text-xs text-slate-400 mb-1.5">
+                                <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+                                    <i class="fa-solid fa-terminal text-slate-400"></i> Registro de Operaciones (trading_bot.log)
+                                </span>
+                                <button onclick="loadVMStatus()" class="hover:text-cyan-400"><i class="fa-solid fa-arrows-rotate mr-1"></i> Refrescar</button>
+                            </div>
+                            <pre id="vm-log-console" class="bg-black/90 text-emerald-400 font-mono text-[11px] p-3 rounded-xl border border-slate-800 h-48 overflow-y-auto custom-scroll leading-relaxed">Cargando logs del servicio en segundo plano...</pre>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- COLUMNA DERECHA: SEÑALES, RIESGO, NLP Y GEMINI AI (4 de 12) -->
+            <div class="xl:col-span-4 space-y-4">
+
+                <!-- 1. DECISIÓN DEL ALGORITMO Y MACHINE LEARNING -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Decisión del Algoritmo</span>
+                        <span id="signal-badge" class="px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                            CALCULANDO...
+                        </span>
+                    </div>
+
+                    <div class="flex items-baseline justify-between py-2 border-y border-slate-800">
+                        <div>
+                            <span class="text-xs text-slate-400 block">Precio Actual:</span>
+                            <span id="live-price" class="text-2xl font-black text-white">$0.00</span>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-xs text-slate-400 block">Certeza Random Forest:</span>
+                            <span id="rf-confidence" class="text-lg font-bold text-cyan-400">--%</span>
+                        </div>
+                    </div>
+
+                    <p id="signal-reason" class="text-xs text-slate-300 mt-2.5 italic">
+                        Analizando confluencia de medias de regresión, SAR y osciladores...
+                    </p>
+                </div>
+
+                <!-- 2. ANÁLISIS DE SENTIMIENTO NLP & NOTICIAS (GEMINI ENTERPRISE) -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl space-y-3">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <div class="w-6 h-6 rounded-lg bg-gradient-to-tr from-emerald-400 to-teal-500 flex items-center justify-center text-white text-xs">
+                                <i class="fa-solid fa-newspaper"></i>
+                            </div>
+                            <h4 class="text-xs font-bold text-white tracking-wide">SENTIMIENTO NLP & NOTICIAS</h4>
+                        </div>
+                        <span id="nlp-class-badge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            ALCISTA
+                        </span>
+                    </div>
+
+                    <!-- Medidor Horizontal de Sentimiento (-1.0 a +1.0) -->
+                    <div>
+                        <div class="flex items-center justify-between text-[11px] mb-1">
+                            <span class="text-rose-400 font-semibold">Pánico (-1.0)</span>
+                            <span class="text-slate-400 font-mono">Score: <b id="nlp-score-val" class="text-white">+0.45</b></span>
+                            <span class="text-emerald-400 font-semibold">Euforia (+1.0)</span>
+                        </div>
+                        <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800 relative">
+                            <div id="nlp-score-bar" class="bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 h-full rounded-full transition-all duration-500" style="width: 72%;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Síntesis NLP y Titulares -->
+                    <p id="nlp-summary-text" class="text-xs text-slate-300 italic leading-relaxed">
+                        Cargando noticias y analizando semántica con Gemini NLP...
+                    </p>
+
+                    <div id="nlp-headlines-container" class="space-y-1.5 pt-1 border-t border-slate-800/80 text-[11px] text-slate-400 max-h-28 overflow-y-auto custom-scroll">
+                        <!-- Titulares renderizados dinámicamente -->
+                    </div>
+                </div>
+
+                <!-- 3. INDICADORES TÉCNICOS EN VIVO -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+                    <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <i class="fa-solid fa-gauge-high text-cyan-400"></i>
+                        Indicadores Técnicos Calculados
+                    </h4>
+                    <div class="grid grid-cols-2 gap-2 text-xs">
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">RSI (14 Periodos)</span>
+                            <span id="ind-rsi" class="font-bold text-slate-200">--</span>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">MACD (12, 26, 9)</span>
+                            <span id="ind-macd" class="font-bold text-slate-200">--</span>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">SAR Parabólico</span>
+                            <span id="ind-sar" class="font-bold text-slate-200">--</span>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">Regresión (Slope)</span>
+                            <span id="ind-lr" class="font-bold text-slate-200">--</span>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">Estocástico (%K / %D)</span>
+                            <span id="ind-stoch" class="font-bold text-slate-200">-- / --</span>
+                        </div>
+                        <div class="bg-slate-950 p-2.5 rounded-lg border border-slate-800/80">
+                            <span class="text-slate-400 block text-[10px]">ATR (Volatilidad)</span>
+                            <span id="ind-atr" class="font-bold text-slate-200">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. GESTIÓN DE RIESGO DINÁMICA (ATR STOP & TAKE PROFIT) -->
+                <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl">
+                    <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2.5 flex items-center justify-between">
+                        <span class="flex items-center gap-2"><i class="fa-solid fa-shield text-amber-400"></i> Administración de Riesgo</span>
+                        <span id="risk-rr" class="text-amber-400 font-semibold text-[11px]">R/B: 1.67</span>
+                    </h4>
+                    <div class="space-y-2 text-xs">
+                        <div class="flex items-center justify-between p-2 rounded bg-rose-500/10 border border-rose-500/20 text-rose-300">
+                            <span>Stop Loss Dinámico:</span>
+                            <span id="risk-sl" class="font-bold font-mono">$0.00</span>
+                        </div>
+                        <div class="flex items-center justify-between p-2 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+                            <span>Take Profit Dinámico:</span>
+                            <span id="risk-tp" class="font-bold font-mono">$0.00</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. ASISTENTE CUANTITATIVO GEMINI ENTERPRISE -->
+                <div class="bg-gradient-to-b from-slate-900 to-slate-950 border border-cyan-500/30 rounded-2xl p-4 shadow-xl">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <div class="w-6 h-6 rounded-lg bg-gradient-to-tr from-cyan-400 to-blue-500 flex items-center justify-center text-white text-xs">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                            </div>
+                            <h4 class="text-xs font-bold text-white tracking-wide">DICTAMEN INSTITUCIONAL GEMINI</h4>
+                        </div>
+                        <span class="text-[10px] text-cyan-400 font-semibold px-2 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30">
+                            Vertex AI
+                        </span>
+                    </div>
+                    <div id="gemini-content" class="text-xs text-slate-300 leading-relaxed max-h-48 overflow-y-auto custom-scroll pr-1 mt-2">
+                        <p class="text-slate-400 italic">Sintetizando variables estocásticas y fundamentales con Gemini Enterprise...</p>
+                    </div>
+                </div>
+
+                <!-- 6. BOTONES DE ACCIÓN RÁPIDA (ÓRDENES EN VIVO) -->
+                <div class="grid grid-cols-2 gap-3 pt-1">
+                    <button onclick="executeOrder('BUY')"
+                        class="py-3 px-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-emerald-600/20 transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-arrow-trend-up"></i>
+                        <span>COMPRAR (BUY)</span>
+                    </button>
+                    <button onclick="executeOrder('SELL')"
+                        class="py-3 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs shadow-lg shadow-rose-600/20 transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-arrow-trend-down"></i>
+                        <span>VENDER (SELL)</span>
+                    </button>
+                </div>
+
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- FOOTER INSTITUCIONAL -->
+    <footer class="bg-slate-950 border-t border-slate-800 text-slate-500 text-[11px] py-4 px-6 mt-8">
+        <div class="max-w-[1700px] mx-auto flex flex-wrap items-center justify-between gap-4">
+            <div>
+                Proyecto Integrador Aplicado • Máquina Virtual en Compute Engine (e2-medium) • Google for Education Credits
+            </div>
+            <div class="flex items-center gap-4">
+                <span><i class="fa-solid fa-microchip mr-1"></i> Random Forest + KNN</span>
+                <span><i class="fa-solid fa-chart-simple mr-1"></i> Diebold-Mariano Test (HLN 1997)</span>
+                <span><i class="fa-solid fa-comments mr-1"></i> Gemini NLP Sentiment</span>
+                <span><i class="fa-brands fa-telegram mr-1"></i> Telegram ChatOps Active</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- SCRIPT PRINCIPAL: RESOLUCIÓN UNIVERSAL TRADINGVIEW + CONFIGURACIÓN + APIs -->
+    <script>
+        const rawTicker = "{{ active_ticker }}";
+        let monteCarloChartInstance = null;
+
+        // =====================================================================
+        // 1. RESOLUCIÓN INTELIGENTE Y UNIVERSAL DE SÍMBOLOS PARA TRADINGVIEW
+        // Resuelve el problema donde el ticker se quedaba buscando en Binance
+        // =====================================================================
+        function resolveTradingViewSymbol(ticker) {
+            if (!ticker) return "BINANCE:BTCUSDT";
+            let t = ticker.toUpperCase().trim();
+
+            // Diccionario exacto de mapeo prioritario
+            const directMap = {
+                "BTC": "BINANCE:BTCUSDT",
+                "BTCUSDT": "BINANCE:BTCUSDT",
+                "ETH": "BINANCE:ETHUSDT",
+                "ETHUSDT": "BINANCE:ETHUSDT",
+                "SOL": "BINANCE:SOLUSDT",
+                "SOLUSDT": "BINANCE:SOLUSDT",
+                "BNB": "BINANCE:BNBUSDT",
+                "BNBUSDT": "BINANCE:BNBUSDT",
+                "ADA": "BINANCE:ADAUSDT",
+                "ADAUSDT": "BINANCE:ADAUSDT",
+                "XRP": "BINANCE:XRPUSDT",
+                "XRPUSDT": "BINANCE:XRPUSDT",
+                "DOGE": "BINANCE:DOGEUSDT",
+                "DOGEUSDT": "BINANCE:DOGEUSDT",
+                "AAPL": "NASDAQ:AAPL",
+                "NVDA": "NASDAQ:NVDA",
+                "TSLA": "NASDAQ:TSLA",
+                "MSFT": "NASDAQ:MSFT",
+                "AMZN": "NASDAQ:AMZN",
+                "GOOGL": "NASDAQ:GOOGL",
+                "GOOG": "NASDAQ:GOOG",
+                "META": "NASDAQ:META",
+                "AMD": "NASDAQ:AMD",
+                "SPY": "AMEX:SPY",
+                "QQQ": "NASDAQ:QQQ",
+                "DIA": "AMEX:DIA"
+            };
+
+            if (directMap[t]) return directMap[t];
+
+            // Si ya tiene el prefijo de exchange (ej. BINANCE: o NASDAQ:)
+            if (t.includes(":")) return t;
+
+            // Listas de exchanges por tipo de activo
+            const stockNasdaq = ["INTC", "NFLX", "COIN", "AVGO", "COST", "PEP", "CSCO", "PYPL"];
+            const stockNyse = ["JPM", "BAC", "V", "MA", "DIS", "WMT", "XOM", "CVX", "ORCL", "IBM", "BA", "GE"];
+            const stockAmex = ["IWM", "GLD", "SLV", "USO", "TLT"];
+
+            if (stockNasdaq.includes(t)) return `NASDAQ:${t}`;
+            if (stockNyse.includes(t)) return `NYSE:${t}`;
+            if (stockAmex.includes(t)) return `AMEX:${t}`;
+
+            // Si termina en USDT o USD
+            if (t.endsWith("USDT")) return `BINANCE:${t}`;
+            if (t.endsWith("USD")) return `COINBASE:${t}`;
+
+            // Criptos populares (si no tiene USDT al final, agregar BINANCE: y USDT)
+            const cryptoShort = ["AVAX", "DOT", "MATIC", "LINK", "LTC", "NEAR", "SUI", "APT", "PEPE", "SHIB", "UNI", "ATOM"];
+            if (cryptoShort.includes(t)) return `BINANCE:${t}USDT`;
+
+            // Si es ticker de 3 o 4 letras pero no es cripto típica, probar NASDAQ
+            if (t.length <= 4) return `NASDAQ:${t}`;
+
+            // Fallback estándar
+            return `BINANCE:${t}USDT`;
+        }
+
+        function loadTradingViewFrame() {
+            const wrapper = document.getElementById('tv_frame_wrapper');
+            const resolvedSymbol = resolveTradingViewSymbol(rawTicker);
+
+            document.getElementById('tv-resolved-symbol').innerText = resolvedSymbol;
+            document.getElementById('tv-current-symbol-label').innerText = rawTicker;
+
+            // Limpiar contenedor previo
+            wrapper.innerHTML = '<div id="tv_chart_container" style="width: 100%; height: 100%; min-height: 540px;"></div>';
+
+            const initTvWidget = () => {
+                if (typeof TradingView !== 'undefined' && TradingView.widget) {
+                    try {
+                        new TradingView.widget({
+                            "autosize": true,
+                            "symbol": resolvedSymbol,
+                            "interval": "60",
+                            "timezone": "America/Mexico_City",
+                            "theme": "dark",
+                            "style": "1",
+                            "locale": "es",
+                            "toolbar_bg": "#0f172a",
+                            "enable_publishing": false,
+                            "hide_top_toolbar": false,
+                            "hide_legend": false,
+                            "save_image": false,
+                            "hide_side_toolbar": false,
+                            "allow_symbol_change": true,
+                            "studies": [
+                                "RSI@tv-basicstudies",
+                                "MACD@tv-basicstudies"
+                            ],
+                            "studies_overrides": {
+                                "rsi.rsi.color": "#06b6d4",
+                                "macd.macd.color": "#3b82f6",
+                                "macd.signal.color": "#f43f5e"
+                            },
+                            "container_id": "tv_chart_container"
+                        });
+                        return true;
+                    } catch (err) {
+                        console.warn("Fallo al instanciar TradingView.widget, usando fallback iframe:", err);
+                        return false;
+                    }
+                }
+                return false;
+            };
+
+            // Intentar inicialización inmediata con TV.js
+            if (!initTvWidget()) {
+                // Si la librería tv.js aún no termina de cargar por red, esperar brevemente o inyectar fallback iframe
+                const studiesParam = encodeURIComponent(JSON.stringify([
+                    {"id": "RSI@tv-basicstudies"},
+                    {"id": "MACD@tv-basicstudies"}
+                ]));
+                const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedSymbol)}&interval=60&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=0f172a&theme=dark&style=1&timezone=America%2FMexico_City&locale=es&studies=${studiesParam}`;
+
+                wrapper.innerHTML = `
+                    <iframe 
+                        id="tradingview_iframe"
+                        src="${tvUrl}"
+                        style="width: 100%; height: 100%; min-height: 540px; border: none;"
+                        allowtransparency="true"
+                        scrolling="no"
+                        allowfullscreen>
+                    </iframe>
+                `;
+
+                // Reintentar con TV.js si se carga en segundo plano
+                setTimeout(() => {
+                    if (typeof TradingView !== 'undefined' && TradingView.widget) {
+                        wrapper.innerHTML = '<div id="tv_chart_container" style="width: 100%; height: 100%; min-height: 540px;"></div>';
+                        initTvWidget();
+                    }
+                }, 1000);
+            }
+        }
+
+        function reloadTradingView() {
+            loadTradingViewFrame();
+        }
+
+        // =====================================================================
+        // 2. GESTIÓN DE PESTAÑAS
+        // =====================================================================
+        function switchTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('bg-cyan-600', 'text-white');
+                btn.classList.add('bg-slate-800', 'text-slate-300');
+            });
+
+            const activeTab = document.getElementById(tabId);
+            if (activeTab) activeTab.classList.remove('hidden');
+
+            const activeBtn = document.getElementById('btn-' + tabId);
+            if (activeBtn) {
+                activeBtn.classList.remove('bg-slate-800', 'text-slate-300');
+                activeBtn.classList.add('bg-cyan-600', 'text-white');
+            }
+
+            if (tabId === 'tab-montecarlo') {
+                loadMonteCarlo();
+            } else if (tabId === 'tab-ml') {
+                loadMLValidation();
+            } else if (tabId === 'tab-watchlist') {
+                loadWatchlist();
+            } else if (tabId === 'tab-vm') {
+                loadVMStatus();
+            } else if (tabId === 'tab-settings') {
+                loadUserSettings();
+            }
+        }
+
+        // =====================================================================
+        // 2.5 CONTROL DE WATCHLIST DINÁMICA & SELECCIÓN DE TICKERS
+        // =====================================================================
+        function selectTicker(ticker) {
+            if (!ticker) return;
+            window.location.href = `/?ticker=${encodeURIComponent(ticker.trim().toUpperCase())}`;
+        }
+
+        async function loadWatchlist() {
+            try {
+                const res = await fetch('/api/watchlist');
+                const data = await res.json();
+                const list = data.watchlist || [];
+
+                // Actualizar contadores
+                const countBadge = document.getElementById('tab-wl-count');
+                if (countBadge) countBadge.innerText = list.length;
+                const topCountLabel = document.getElementById('wl-count-label');
+                if (topCountLabel) topCountLabel.innerText = list.length;
+
+                // 1. Renderizar chips dinámicos en la barra superior
+                const chipsContainer = document.getElementById('watchlist-chips-container');
+                if (chipsContainer) {
+                    if (list.length === 0) {
+                        chipsContainer.innerHTML = '<span class="text-xs text-slate-500 italic">No hay activos en el radar. Agrega uno con el botón superior.</span>';
+                    } else {
+                        chipsContainer.innerHTML = list.map(item => {
+                            const isCurrent = (item.ticker.toUpperCase() === rawTicker.toUpperCase());
+                            const activeClass = isCurrent 
+                                ? 'bg-cyan-600/30 border-cyan-500/60 text-white font-bold ring-1 ring-cyan-500 shadow-sm' 
+                                : 'bg-slate-950/90 border-slate-800 text-slate-300 hover:border-slate-600 hover:text-white';
+                            const openDot = item.market_open 
+                                ? '<span class="w-2 h-2 rounded-full bg-emerald-400 inline-block animate-pulse shadow-sm shadow-emerald-400/50" title="Mercado Operable en Vivo"></span>' 
+                                : '<span class="w-2 h-2 rounded-full bg-amber-400 inline-block" title="Mercado Cerrado (Espera horario NYSE/NASDAQ)"></span>';
+                            const priceFormatted = item.price > 0 ? `$${item.price.toLocaleString()}` : '--';
+                            
+                            return `
+                                <div class="group flex items-center gap-2 px-3 py-1 rounded-xl border text-xs cursor-pointer transition ${activeClass}">
+                                    <div onclick="selectTicker('${item.ticker}')" class="flex items-center gap-1.5" title="Ver análisis de ${item.ticker}">
+                                        ${openDot}
+                                        <span class="tracking-wide">${item.ticker}</span>
+                                        <span class="text-[10px] text-slate-400 font-mono">${priceFormatted}</span>
+                                    </div>
+                                    <button onclick="event.stopPropagation(); removeTickerFromWatchlist('${item.ticker}')" 
+                                            class="text-slate-500 hover:text-rose-400 hover:bg-rose-500/20 rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-70 group-hover:opacity-100 transition ml-1" 
+                                            title="Eliminar ${item.ticker} de Watchlist">
+                                        &times;
+                                    </button>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                }
+
+                // 2. Renderizar tabla en la pestaña Watchlist
+                const tbody = document.getElementById('watchlist-tbody');
+                if (tbody) {
+                    if (list.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="5" class="py-6 text-center text-slate-500">No hay activos en el radar. Añade uno arriba.</td></tr>';
+                    } else {
+                        tbody.innerHTML = list.map(item => {
+                            const isCurrent = (item.ticker.toUpperCase() === rawTicker.toUpperCase());
+                            const typeBadge = item.type === 'CRYPTO' 
+                                ? '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1 w-max"><i class="fa-solid fa-coins text-[10px]"></i> Cripto (24/7)</span>' 
+                                : '<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/10 text-blue-400 border border-blue-500/20 flex items-center gap-1 w-max"><i class="fa-solid fa-building-columns text-[10px]"></i> Acción Wall Street</span>';
+                            
+                            const marketBadge = item.market_open 
+                                ? '<span class="px-2.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5 w-max"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Operable en Vivo</span>' 
+                                : '<span class="px-2.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20 flex items-center gap-1.5 w-max" title="Horario NYSE: Lun-Vie 9:30-16:00 EST"><span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> Mercado Cerrado (Espera horario oficial)</span>';
+                            
+                            const priceFormatted = item.price > 0 ? `$${item.price.toLocaleString()}` : 'Calculando...';
+
+                            return `
+                                <tr class="hover:bg-slate-900/60 transition ${isCurrent ? 'bg-cyan-950/25' : ''}">
+                                    <td class="py-3 px-3 font-bold text-white flex items-center gap-2">
+                                        <div class="w-6 h-6 rounded-lg bg-slate-800 flex items-center justify-center text-[11px] text-cyan-400">
+                                            <i class="fa-solid ${item.type === 'CRYPTO' ? 'fa-coins' : 'fa-chart-line'}"></i>
+                                        </div>
+                                        <span>${item.ticker}</span>
+                                        ${isCurrent ? '<span class="text-[9px] bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 px-1.5 py-0.2 rounded font-semibold uppercase">Activo</span>' : ''}
+                                    </td>
+                                    <td class="py-3 px-3">${typeBadge}</td>
+                                    <td class="py-3 px-3">${marketBadge}</td>
+                                    <td class="py-3 px-3 font-mono font-semibold text-white text-sm">${priceFormatted}</td>
+                                    <td class="py-3 px-3 text-center">
+                                        <div class="flex items-center justify-center gap-2">
+                                            <button onclick="selectTicker('${item.ticker}')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white text-xs transition flex items-center gap-1 font-semibold">
+                                                <i class="fa-solid fa-chart-candlestick"></i> Analizar en Gráfica
+                                            </button>
+                                            <button onclick="removeTickerFromWatchlist('${item.ticker}')" class="px-2 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-500/30 text-rose-400 border border-rose-500/20 text-xs transition" title="Eliminar del radar">
+                                                <i class="fa-solid fa-trash-can"></i>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('');
+                    }
+                }
+            } catch (e) {
+                console.error("Error al cargar watchlist:", e);
+            }
+        }
+
+        async function addTickerToWatchlist() {
+            const input = document.getElementById('add-watchlist-input');
+            const sym = (input ? input.value : '').trim().toUpperCase();
+            if (!sym) {
+                alert("Por favor ingresa un símbolo válido (ej: NVDA, ETHUSDT, TSLA, BTCUSDT).");
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/watchlist', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ticker: sym })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    if (input) input.value = '';
+                    await loadWatchlist();
+                } else {
+                    alert(`Aviso: ${result.message}`);
+                }
+            } catch (e) {
+                alert(`Error al agregar ticker: ${e}`);
+            }
+        }
+
+        async function addCurrentTickerToWatchlist() {
+            try {
+                const res = await fetch('/api/watchlist', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ ticker: rawTicker })
+                });
+                const result = await res.json();
+                if (result.success) {
+                    await loadWatchlist();
+                    alert(`✅ ${rawTicker} agregado a la lista de monitoreo.`);
+                } else {
+                    alert(result.message);
+                }
+            } catch (e) {
+                alert(`Error al agregar ticker actual: ${e}`);
+            }
+        }
+
+        async function removeTickerFromWatchlist(ticker) {
+            if (!confirm(`¿Deseas remover ${ticker} del radar de monitoreo del bot?`)) return;
+            try {
+                const res = await fetch(`/api/watchlist/${ticker}`, {
+                    method: 'DELETE'
+                });
+                const result = await res.json();
+                if (result.success) {
+                    await loadWatchlist();
+                } else {
+                    alert(result.message);
+                }
+            } catch (e) {
+                alert(`Error al eliminar ticker: ${e}`);
+            }
+        }
+
+        // =====================================================================
+        // 3. CONFIGURACIÓN PERSONALIZADA POR USUARIO
+        // =====================================================================
+        async function loadUserSettings() {
+            try {
+                const res = await fetch('/api/user-settings');
+                const data = await res.json();
+                const s = data.settings || {};
+
+                document.getElementById('cfg-use-rsi').checked = s.use_rsi !== false;
+                document.getElementById('cfg-use-macd').checked = s.use_macd !== false;
+                document.getElementById('cfg-use-sar').checked = s.use_sar !== false;
+                document.getElementById('cfg-use-lr').checked = s.use_lr !== false;
+                document.getElementById('cfg-use-stoch').checked = s.use_stoch !== false;
+                document.getElementById('cfg-use-ml').checked = s.use_ml !== false;
+                document.getElementById('cfg-use-nlp').checked = s.use_nlp !== false;
+                document.getElementById('cfg-use-mc').checked = s.use_montecarlo !== false;
+
+                if (s.risk_per_trade_pct) document.getElementById('cfg-risk-pct').value = s.risk_per_trade_pct.toFixed(1);
+                if (s.atr_sl_mult) document.getElementById('cfg-atr-sl').value = s.atr_sl_mult.toFixed(1);
+                if (s.atr_tp_mult) document.getElementById('cfg-atr-tp').value = s.atr_tp_mult.toFixed(1);
+                if (s.rf_confidence_threshold) document.getElementById('cfg-rf-threshold').value = s.rf_confidence_threshold.toString();
+
+                const autoStatus = document.getElementById('top-autotrade-status');
+                if (autoStatus) {
+                    autoStatus.innerText = s.auto_trade_enabled !== false ? 'ACTIVO' : 'PAUSADO';
+                }
+            } catch (e) {
+                console.error("Error al cargar configuración:", e);
+            }
+        }
+
+        async function saveUserSettings() {
+            const payload = {
+                use_rsi: document.getElementById('cfg-use-rsi').checked,
+                use_macd: document.getElementById('cfg-use-macd').checked,
+                use_sar: document.getElementById('cfg-use-sar').checked,
+                use_lr: document.getElementById('cfg-use-lr').checked,
+                use_stoch: document.getElementById('cfg-use-stoch').checked,
+                use_ml: document.getElementById('cfg-use-ml').checked,
+                use_nlp: document.getElementById('cfg-use-nlp').checked,
+                use_montecarlo: document.getElementById('cfg-use-mc').checked,
+                risk_per_trade_pct: parseFloat(document.getElementById('cfg-risk-pct').value),
+                atr_sl_mult: parseFloat(document.getElementById('cfg-atr-sl').value),
+                atr_tp_mult: parseFloat(document.getElementById('cfg-atr-tp').value),
+                rf_confidence_threshold: parseInt(document.getElementById('cfg-rf-threshold').value),
+                auto_trade_enabled: true
+            };
+
+            try {
+                const res = await fetch('/api/user-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const result = await res.json();
+                if (result.success) {
+                    const fb = document.getElementById('cfg-save-feedback');
+                    fb.style.opacity = '1';
+                    setTimeout(() => fb.style.opacity = '0', 3500);
+                    // Recargar análisis en vivo con las nuevas métricas seleccionadas
+                    loadMarketAnalysis();
+                }
+            } catch (e) {
+                alert(`Error al guardar configuración: ${e}`);
+            }
+        }
+
+        async function toggleAutoTradeTop() {
+            const currentText = document.getElementById('top-autotrade-status').innerText;
+            const newState = currentText !== 'ACTIVO';
+
+            try {
+                const res = await fetch('/api/user-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ auto_trade_enabled: newState })
+                });
+                document.getElementById('top-autotrade-status').innerText = newState ? 'ACTIVO' : 'PAUSADO';
+                const btn = document.getElementById('top-autotrade-btn');
+                if (newState) {
+                    btn.className = "px-2 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 flex items-center gap-1 hover:bg-cyan-500/30 transition";
+                } else {
+                    btn.className = "px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1 hover:bg-rose-500/30 transition";
+                }
+            } catch (e) {
+                console.error("Error al cambiar estado auto-trade:", e);
+            }
+        }
+
+        // =====================================================================
+        // 4. ANÁLISIS DE MERCADO & NLP SENTIMENT (GEMINI ENTERPRISE)
+        // =====================================================================
+        async function loadMarketAnalysis() {
+            try {
+                const res = await fetch(`/api/market-analysis?ticker=${rawTicker}`);
+                const data = await res.json();
+
+                document.getElementById('live-price').innerText = `$${data.current_price.toLocaleString()}`;
+                
+                // Badge de Señal del Algoritmo
+                const sig = data.strategy.signal;
+                const badge = document.getElementById('signal-badge');
+                if (sig === 'BUY') {
+                    badge.innerText = '🟢 BUY (COMPRA)';
+                    badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+                } else if (sig === 'SELL') {
+                    badge.innerText = '🔴 SELL (VENTA)';
+                    badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40';
+                } else {
+                    badge.innerText = '⚪ HOLD (ESPERA)';
+                    badge.className = 'px-3 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300 border border-slate-700';
+                }
+
+                document.getElementById('rf-confidence').innerText = `${(data.machine_learning.confidence * 100).toFixed(1)}%`;
+                document.getElementById('signal-reason').innerText = data.strategy.reason;
+
+                // NLP Sentiment Data
+                if (data.nlp_sentiment) {
+                    const nlp = data.nlp_sentiment;
+                    const score = nlp.sentiment_score;
+                    document.getElementById('nlp-score-val').innerText = `${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
+                    
+                    // Ajustar posición visual del medidor de sentimiento (-1.0 a +1.0 normalizado a 0% - 100%)
+                    const pct = Math.max(5, Math.min(95, ((score + 1.0) / 2.0) * 100));
+                    document.getElementById('nlp-score-bar').style.width = pct + '%';
+
+                    const classBadge = document.getElementById('nlp-class-badge');
+                    classBadge.innerText = nlp.classification;
+                    if (nlp.classification.includes('ALCISTA')) {
+                        classBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                    } else if (nlp.classification.includes('BAJISTA')) {
+                        classBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+                    } else {
+                        classBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700';
+                    }
+
+                    document.getElementById('nlp-summary-text').innerText = nlp.summary;
+
+                    // Renderizar titulares de noticias
+                    const headlinesContainer = document.getElementById('nlp-headlines-container');
+                    if (nlp.headlines && nlp.headlines.length > 0) {
+                        headlinesContainer.innerHTML = nlp.headlines.map(h => `
+                            <div class="flex items-start gap-1.5 py-0.5">
+                                <span class="text-slate-500 text-[10px] mt-0.5">•</span>
+                                <div>
+                                    <span class="text-slate-300">${h.headline}</span>
+                                    <span class="text-[10px] text-cyan-400/80 font-mono">(${h.source})</span>
+                                </div>
+                            </div>
+                        `).join('');
+                    }
+                }
+
+                // Indicadores Técnicos
+                const m = data.strategy.metrics;
+                document.getElementById('ind-rsi').innerText = m.rsi_14;
+                document.getElementById('ind-macd').innerText = `${m.macd} (Sig: ${m.macd_signal})`;
+                document.getElementById('ind-sar').innerText = `$${m.sar.toLocaleString()}`;
+                document.getElementById('ind-lr').innerText = m.lr_slope;
+                document.getElementById('ind-stoch').innerText = `${m.stoch_k} / ${m.stoch_d}`;
+                document.getElementById('ind-atr').innerText = `$${m.atr_14.toFixed(2)}`;
+
+                // Riesgo
+                if (data.risk_parameters.valid) {
+                    document.getElementById('risk-sl').innerText = `$${data.risk_parameters.stop_loss.toLocaleString()}`;
+                    document.getElementById('risk-tp').innerText = `$${data.risk_parameters.take_profit.toLocaleString()}`;
+                    document.getElementById('risk-rr').innerText = `R/B: ${data.risk_parameters.risk_reward_ratio}`;
+                }
+
+                // Gemini Analysis
+                document.getElementById('gemini-content').innerHTML = data.gemini_analysis.replace(/\n/g, '<br>');
+                document.getElementById('clock-live').innerText = data.timestamp;
+
+            } catch (e) {
+                console.error("Error en análisis de mercado:", e);
+            }
+        }
+
+        // =====================================================================
+        // 5. CARGA DE KPIs DE CARTERA
+        // =====================================================================
+        async function loadPortfolioMetrics() {
+            try {
+                const res = await fetch('/api/metrics');
+                const data = await res.json();
+
+                document.getElementById('kpi-win-rate').innerText = data.win_rate + '%';
+                document.getElementById('kpi-trades-count').innerText = `(${data.total_trades} trades)`;
+                document.getElementById('kpi-win-bar').style.width = data.win_rate + '%';
+
+                document.getElementById('kpi-profit-factor').innerText = data.profit_factor;
+                document.getElementById('kpi-accumulated-profit').innerText = `$${data.accumulated_profit_usd.toLocaleString()}`;
+                
+                const pctElem = document.getElementById('kpi-accumulated-pct');
+                pctElem.innerText = `${data.accumulated_profit_pct >= 0 ? '+' : ''}${data.accumulated_profit_pct}%`;
+                pctElem.className = data.accumulated_profit_pct >= 0 ? 'text-xs font-semibold text-emerald-400' : 'text-xs font-semibold text-rose-400';
+
+                document.getElementById('kpi-equity').innerText = `$${data.equity.toLocaleString()}`;
+                document.getElementById('kpi-unrealized').innerHTML = `PnL Flotante: <span class="${data.unrealized_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'} font-semibold">$${data.unrealized_pnl.toLocaleString()}</span>`;
+
+                document.getElementById('kpi-sharpe').innerText = data.sharpe_ratio;
+                document.getElementById('kpi-drawdown').innerText = `${data.max_drawdown_pct}%`;
+            } catch (e) {
+                console.error("Error al cargar métricas:", e);
+            }
+        }
+
+        // =====================================================================
+        // 6. POSICIONES Y HISTORIAL
+        // =====================================================================
+        async function loadPositions() {
+            try {
+                const res = await fetch('/api/positions');
+                const data = await res.json();
+                const tbody = document.getElementById('active-positions-tbody');
+                const posCount = document.getElementById('tab-pos-count');
+
+                posCount.innerText = data.active_positions.length;
+
+                if (!data.active_positions || data.active_positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="9" class="py-6 text-center text-slate-500">No hay posiciones activas en este momento.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.active_positions.map(p => {
+                    const pnlColor = p.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                    const sideColor = p.side === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30';
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-3 px-3 font-bold text-white">${p.ticker}</td>
+                            <td class="py-3 px-3"><span class="px-2 py-0.5 rounded text-[10px] font-bold border ${sideColor}">${p.side}</span></td>
+                            <td class="py-3 px-3 font-mono">$${p.entry_price.toLocaleString()}</td>
+                            <td class="py-3 px-3 font-mono text-cyan-300">$${p.current_price.toLocaleString()}</td>
+                            <td class="py-3 px-3">${p.size}</td>
+                            <td class="py-3 px-3 font-mono text-rose-400">$${p.stop_loss.toLocaleString()}</td>
+                            <td class="py-3 px-3 font-mono text-emerald-400">$${p.take_profit.toLocaleString()}</td>
+                            <td class="py-3 px-3 font-mono font-bold ${pnlColor}">$${p.pnl >= 0 ? '+' : ''}${p.pnl.toFixed(2)} (${p.roi_pct >= 0 ? '+' : ''}${p.roi_pct}%)</td>
+                            <td class="py-3 px-3 text-center">
+                                <button onclick="closePosition('${p.ticker}')" class="px-2.5 py-1 rounded bg-rose-600/30 hover:bg-rose-600 text-rose-300 hover:text-white border border-rose-500/40 text-[10px] font-semibold transition">
+                                    Cerrar
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error("Error al cargar posiciones:", e);
+            }
+        }
+
+        async function loadHistory() {
+            try {
+                const res = await fetch('/api/history');
+                const data = await res.json();
+                const tbody = document.getElementById('trade-history-tbody');
+
+                if (!data.trade_history || data.trade_history.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="8" class="py-6 text-center text-slate-500">Historial vacío.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.trade_history.map(t => {
+                    const pnlColor = t.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400';
+                    const sideColor = t.side === 'BUY' ? 'text-emerald-400' : 'text-rose-400';
+
+                    return `
+                        <tr class="hover:bg-slate-800/40 transition">
+                            <td class="py-2.5 px-3 text-slate-400">${t.exit_time || t.entry_time}</td>
+                            <td class="py-2.5 px-3 font-bold text-white">${t.ticker}</td>
+                            <td class="py-2.5 px-3 font-semibold ${sideColor}">${t.side}</td>
+                            <td class="py-2.5 px-3 font-mono">$${t.entry_price.toLocaleString()}</td>
+                            <td class="py-2.5 px-3 font-mono">$${t.exit_price.toLocaleString()}</td>
+                            <td class="py-2.5 px-3 font-mono font-bold ${pnlColor}">$${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}</td>
+                            <td class="py-2.5 px-3 font-bold ${pnlColor}">${t.roi_pct >= 0 ? '+' : ''}${t.roi_pct}%</td>
+                            <td class="py-2.5 px-3"><span class="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-300">${t.exit_reason}</span></td>
+                        </tr>
+                    `;
+                }).join('');
+            } catch (e) {
+                console.error("Error al cargar historial:", e);
+            }
+        }
+
+        // =====================================================================
+        // 7. MONTE CARLO & VALIDACIÓN ML
+        // =====================================================================
+        async function loadMonteCarlo() {
+            try {
+                const res = await fetch(`/api/monte-carlo?ticker=${rawTicker}&sims=1000`);
+                const data = await res.json();
+
+                document.getElementById('mc-prob-tp').innerText = `${(data.prob_take_profit * 100).toFixed(1)}%`;
+                document.getElementById('mc-prob-sl').innerText = `${(data.prob_stop_loss * 100).toFixed(1)}%`;
+                document.getElementById('mc-edge-ratio').innerText = `${data.edge_ratio}x`;
+                document.getElementById('mc-var-95').innerText = `${data.value_at_risk_95}%`;
+
+                const ctx = document.getElementById('monteCarloChart').getContext('2d');
+                if (monteCarloChartInstance) {
+                    monteCarloChartInstance.destroy();
+                }
+
+                const labels = Array.from({length: data.time_horizon_bars + 1}, (_, i) => `T+${i}`);
+                const datasets = [];
+
+                data.sample_paths.forEach((path, idx) => {
+                    datasets.push({
+                        label: `Camino ${idx + 1}`,
+                        data: path,
+                        borderColor: 'rgba(100, 116, 139, 0.25)',
+                        borderWidth: 1,
+                        pointRadius: 0,
+                        fill: false
+                    });
+                });
+
+                datasets.push({
+                    label: 'Mediana (p50)',
+                    data: data.percentiles.p50,
+                    borderColor: '#06b6d4',
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    fill: false
+                });
+
+                datasets.push({
+                    label: 'Take Profit',
+                    data: Array(data.time_horizon_bars + 1).fill(data.take_profit),
+                    borderColor: '#10b981',
+                    borderWidth: 2,
+                    borderDash: [6, 4],
+                    pointRadius: 0,
+                    fill: false
+                });
+
+                datasets.push({
+                    label: 'Stop Loss',
+                    data: Array(data.time_horizon_bars + 1).fill(data.stop_loss),
+                    borderColor: '#f43f5e',
+                    borderWidth: 2,
+                    borderDash: [6, 4],
+                    pointRadius: 0,
+                    fill: false
+                });
+
+                monteCarloChartInstance = new Chart(ctx, {
+                    type: 'line',
+                    data: { labels: labels, datasets: datasets },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            x: { grid: { color: 'rgba(51, 65, 85, 0.3)' } },
+                            y: { grid: { color: 'rgba(51, 65, 85, 0.3)' } }
+                        }
+                    }
+                });
+            } catch (e) {
+                console.error("Error al cargar Monte Carlo:", e);
+            }
+        }
+
+        async function loadMLValidation() {
+            try {
+                const res = await fetch(`/api/ml-validation?ticker=${rawTicker}`);
+                const data = await res.json();
+
+                const dm = data.diebold_mariano;
+                document.getElementById('dm-stat').innerText = dm.dm_stat.toFixed(4);
+                document.getElementById('dm-pvalue').innerText = `p-valor: ${dm.p_value.toFixed(4)}`;
+                document.getElementById('dm-conclusion').innerText = dm.conclusion;
+
+                const tbody = document.getElementById('hp-simulation-tbody');
+                tbody.innerHTML = data.simulation_table.map(row => `
+                    <tr class="hover:bg-slate-800/40 transition">
+                        <td class="py-1.5 px-2.5 font-bold text-white">${row.n_estimators}</td>
+                        <td class="py-1.5 px-2.5">${row.max_depth}</td>
+                        <td class="py-1.5 px-2.5">${row.min_samples_split}</td>
+                        <td class="py-1.5 px-2.5 font-semibold text-cyan-400">${(row.accuracy * 100).toFixed(2)}%</td>
+                        <td class="py-1.5 px-2.5 font-semibold text-emerald-400">${row.f1_score.toFixed(4)}</td>
+                        <td class="py-1.5 px-2.5 font-mono">${row.rmse.toFixed(5)}</td>
+                        <td class="py-1.5 px-2.5 font-mono">${row.mae.toFixed(5)}</td>
+                        <td class="py-1.5 px-2.5">${row.smape.toFixed(2)}%</td>
+                        <td class="py-1.5 px-2.5">${row.mape.toFixed(2)}%</td>
+                        <td class="py-1.5 px-2.5 font-bold text-purple-400">${row.variance_score.toFixed(4)}</td>
+                    </tr>
+                `).join('');
+
+                const cm = data.metrics.confusion_matrix;
+                const cmContainer = document.getElementById('confusion-matrix-container');
+                if (cm && cm.length === 3) {
+                    cmContainer.innerHTML = `
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">SELL: <b class="text-rose-400">${cm[0][0]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">HOLD: <b>${cm[0][1]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">BUY: <b>${cm[0][2]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">SELL: <b>${cm[1][0]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">HOLD: <b class="text-cyan-400">${cm[1][1]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">BUY: <b>${cm[1][2]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">SELL: <b>${cm[2][0]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">HOLD: <b>${cm[2][1]}</b></div>
+                        <div class="p-2 bg-slate-900 rounded border border-slate-800">BUY: <b class="text-emerald-400">${cm[2][2]}</b></div>
+                    `;
+                }
+            } catch (e) {
+                console.error("Error al cargar ML validation:", e);
+            }
+        }
+
+        async function loadVMStatus() {
+            try {
+                const res = await fetch('/api/vm-status');
+                const data = await res.json();
+
+                document.getElementById('vm-cpu').innerText = `${data.cpu_usage_pct}%`;
+                document.getElementById('vm-ram').innerText = `${data.ram_usage_pct}% (${data.ram_used_mb}MB / ${data.ram_total_mb}MB)`;
+                document.getElementById('vm-disk').innerText = `${data.disk_free_gb} GB Libres`;
+
+                const consoleElem = document.getElementById('vm-log-console');
+                if (data.logs && data.logs.length > 0) {
+                    consoleElem.innerText = data.logs.join('');
+                    consoleElem.scrollTop = consoleElem.scrollHeight;
+                } else {
+                    consoleElem.innerText = "[OK] Servicio Compute Engine activo. Sin errores registrados.";
+                }
+            } catch (e) {
+                console.error("Error al cargar VM status:", e);
+            }
+        }
+
+        // =====================================================================
+        // 8. EJECUCIÓN MANUAL DE ÓRDENES
+        // =====================================================================
+        async function executeOrder(side) {
+            const formData = new FormData();
+            formData.append('ticker', rawTicker);
+            formData.append('side', side);
+
+            try {
+                const res = await fetch('/api/order', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await res.json();
+                if (result.success) {
+                    alert(`✅ Orden ${side} ejecutada satisfactoriamente para ${rawTicker}`);
+                    loadPositions();
+                    loadPortfolioMetrics();
+                } else {
+                    alert(`❌ No se pudo ejecutar: ${result.message}`);
+                }
+            } catch (e) {
+                alert(`Error al enviar orden: ${e}`);
+            }
+        }
+
+        async function closePosition(ticker) {
+            const formData = new FormData();
+            formData.append('ticker', ticker);
+
+            try {
+                const res = await fetch('/api/close-position', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await res.json();
+                if (result.success) {
+                    alert(`🚪 Posición de ${ticker} cerrada exitosamente.`);
+                    loadPositions();
+                    loadHistory();
+                    loadPortfolioMetrics();
+                }
+            } catch (e) {
+                alert(`Error al cerrar posición: ${e}`);
+            }
+        }
+
+        // =====================================================================
+        // INICIALIZACIÓN COMPLETA AL CARGAR EL DOM
+        // =====================================================================
+        window.addEventListener('DOMContentLoaded', () => {
+            // Cargar gráfica de TradingView instantánea con resolución de exchange correcta
+            loadTradingViewFrame();
+
+            // Cargar métricas, watchlist y preferencias
+            loadPortfolioMetrics();
+            loadPositions();
+            loadHistory();
+            loadMarketAnalysis();
+            loadUserSettings();
+            loadWatchlist();
+
+            // Refresco periódico cada 15 segundos
+            setInterval(() => {
+                loadMarketAnalysis();
+                loadPositions();
+                loadPortfolioMetrics();
+                loadWatchlist();
+            }, 15000);
+        });
+    </script>
+
+</body>
+</html>

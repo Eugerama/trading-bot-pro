@@ -1,0 +1,35 @@
+# Quantitative Trading Bot & AI Dashboard - Requirements
+# Python 3.10+ compatible
+
+# Core Scientific & Financial Data
+numpy>=1.24.0
+scipy>=1.10.0
+pandas>=2.0.0
+yfinance>=0.2.36
+
+# Machine Learning & Optimization
+scikit-learn>=1.3.0
+statsmodels>=0.14.0
+
+# API Clients & Web Requests
+requests>=2.31.0
+aiohttp>=3.9.0
+python-dotenv>=1.0.0
+psutil>=5.9.0
+
+# AI & LLM Integration (Gemini Enterprise / AI Studio)
+google-generativeai>=0.4.0
+
+# Telegram ChatOps
+python-telegram-bot>=20.7
+
+# Web Application & Dashboard (FastAPI + ASGI Server)
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+jinja2>=3.1.3
+python-multipart>=0.0.9
+
+# Crypto Exchanges (Testnet execution)
+ccxt>=4.2.0
+pybit>=5.6.0
+

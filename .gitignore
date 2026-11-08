@@ -1,0 +1,29 @@
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# Variables de entorno y credenciales privadas (¡NUNCA SUBIR A GITHUB!)
+.env
+*.pem
+*.key
+google_credentials.json
+
+# Caché de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Archivos de estado y logs locales
+trading_bot.log
+logs/
+*.log
+
+# Archivos del sistema y del IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+

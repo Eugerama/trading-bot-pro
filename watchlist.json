@@ -1,0 +1,32 @@
+[
+  {
+    "ticker": "BTCUSDT",
+    "type": "CRYPTO",
+    "added_at": "2026-11-01 00:00:00"
+  },
+  {
+    "ticker": "ETHUSDT",
+    "type": "CRYPTO",
+    "added_at": "2026-11-01 00:00:00"
+  },
+  {
+    "ticker": "SOLUSDT",
+    "type": "CRYPTO",
+    "added_at": "2026-11-01 00:00:00"
+  },
+  {
+    "ticker": "NVDA",
+    "type": "STOCK",
+    "added_at": "2026-11-01 00:00:00"
+  },
+  {
+    "ticker": "AAPL",
+    "type": "STOCK",
+    "added_at": "2026-11-01 00:00:00"
+  },
+  {
+    "ticker": "TSLA",
+    "type": "STOCK",
+    "added_at": "2026-11-08 11:52:58"
+  }
+]
