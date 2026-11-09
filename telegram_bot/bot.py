@@ -109,11 +109,11 @@ class TelegramTradingBot:
         logger.info("[TelegramBot] Hilo de Telegram ChatOps iniciado satisfactoriamente.")
 
     def _run_polling(self):
-        """Ejecuta el bucle de eventos asíncrono para el bot de Telegram."""
+        """Ejecuta el bucle de eventos asíncrono para el bot de Telegram sin invocar señales del hilo principal."""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
-        try:
+        async def _bot_main():
             self.app = Application.builder().token(self.token).build()
 
             # Registro de Comandos
@@ -133,9 +133,27 @@ class TelegramTradingBot:
             self.app.add_handler(CommandHandler("watch", self.cmd_watch))
             self.app.add_handler(CommandHandler("unwatch", self.cmd_unwatch))
 
+            # Inicialización asíncrona compatible con hilos secundarios (sin set_wakeup_fd)
+            await self.app.initialize()
+            await self.app.start()
+            await self.app.updater.start_polling(drop_pending_updates=True)
+            
             self.is_running = True
             logger.info("🤖 Bot de Telegram en línea y escuchando comandos en GCP Compute Engine.")
-            self.app.run_polling(drop_pending_updates=True, close_loop=False)
+
+            # Mantener hilo activo mientras self.is_running sea True
+            while self.is_running:
+                await asyncio.sleep(1)
+
+            try:
+                await self.app.updater.stop()
+                await self.app.stop()
+                await self.app.shutdown()
+            except Exception:
+                pass
+
+        try:
+            self._loop.run_until_complete(_bot_main())
         except Exception as e:
             logger.error(f"[TelegramBot] Error en ciclo de polling de Telegram: {e}")
             self.is_running = False
