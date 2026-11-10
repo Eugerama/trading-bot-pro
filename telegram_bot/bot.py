@@ -94,6 +94,49 @@ logging.basicConfig(
 logger = logging.getLogger("TelegramChatOps")
 
 
+def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Optional[str]:
+    """Invoca la API de Gemini probando automáticamente los modelos activos para la clave."""
+    key = api_key or os.getenv("GEMINI_API_KEY", "")
+    if not key or len(key) < 15 or "TuClave" in key:
+        return None
+
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=key)
+
+        # 1. Descubrimiento dinámico de modelos autorizados por Google para esta clave
+        candidates = []
+        try:
+            for m in genai.list_models():
+                methods = getattr(m, 'supported_generation_methods', [])
+                if 'generateContent' in methods:
+                    name_clean = m.name.replace("models/", "")
+                    if name_clean not in candidates:
+                        candidates.append(name_clean)
+        except Exception:
+            pass
+
+        # 2. Agregar modelos estándar en orden de prioridad
+        preferred = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+        for std in [preferred, "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.5-pro"]:
+            if std not in candidates:
+                candidates.append(std)
+
+        # 3. Intentar generar respuesta con cada candidato disponible
+        for model_name in candidates:
+            try:
+                m = genai.GenerativeModel(model_name)
+                response = m.generate_content(prompt)
+                if response and response.text:
+                    return response.text.strip()
+            except Exception:
+                continue
+    except Exception as e:
+        logger.error(f"[GeminiCall] Error: {e}")
+
+    return None
+
+
 def generate_chart_image(ticker: str, df: pd.DataFrame) -> Optional[io.BytesIO]:
     """Genera una gráfica financiera técnica en modo oscuro institucional con Precio, RSI y MACD."""
     if not MATPLOTLIB_AVAILABLE or df is None or len(df) < 15:
@@ -803,29 +846,32 @@ INSTRUCCIONES DE RESPUESTA:
 4. Mantén la respuesta concisa y legible en Telegram (máximo 2 a 3 párrafos, usando negritas y viñetas)."""
 
         try:
-            ai_text = None
-            if self.gemini_agent and self.gemini_agent.model:
-                res = self.gemini_agent.model.generate_content(system_prompt)
-                ai_text = res.text.strip()
-            else:
-                api_key = os.getenv("GEMINI_API_KEY", "")
-                if api_key and len(api_key) > 15:
-                    import google.generativeai as genai
-                    genai.configure(api_key=api_key)
-                    model_name = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-                    m = genai.GenerativeModel(model_name)
-                    res = m.generate_content(system_prompt)
-                    ai_text = res.text.strip()
+            target_key = (self.gemini_agent.api_key if self.gemini_agent else None) or os.getenv("GEMINI_API_KEY", "")
+            ai_text = call_gemini_with_fallback(system_prompt, target_key)
 
-            if not ai_text:
-                ai_text = (
-                    "El sistema opera bajo un enfoque sistemático basado en confluencia estadística. "
-                    "El modelo Random Forest clasifica probabilidades direccionales validadas mediante el test Diebold-Mariano (p-valor < 0.05), "
-                    "mientras que la administración de riesgo ATR protege el capital ante picos de volatilidad."
-                )
+            if ai_text:
+                reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
+                await update.message.reply_text(reply, parse_mode="Markdown")
+                return
 
+            # Si la API no respondió texto pero tampoco arrojó error fatal
+            ai_text = (
+                "El sistema opera bajo un enfoque sistemático basado en confluencia estadística. "
+                "El modelo Random Forest clasifica probabilidades direccionales validadas mediante el test Diebold-Mariano (p-valor < 0.05), "
+                "mientras que la administración de riesgo ATR protege el capital ante picos de volatilidad."
+            )
             reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
             await update.message.reply_text(reply, parse_mode="Markdown")
+        except Exception as e:
+            logger.error(f"[TelegramGemini] Error al consultar Gemini: {e}")
+            fallback = (
+                f"🧠 *ANÁLISIS CUANTITATIVO (MODO RESILIENCIA)*\n\n"
+                f"Respecto a tu consulta sobre *{question}*:\n"
+                f"El bot mantiene una postura estadística disciplinada sobre *{active_ticker}*. "
+                f"Las decisiones se ejecutan únicamente cuando coinciden la señal del clasificador Random Forest (certeza > 55%), "
+                f"la pendiente de la regresión lineal y una relación Beneficio/Riesgo calculada por ATR superior a 1.67x."
+            )
+            await update.message.reply_text(fallback, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"[TelegramGemini] Error al consultar Gemini: {e}")
             fallback = (
