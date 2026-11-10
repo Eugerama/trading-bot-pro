@@ -21,14 +21,16 @@ class GeminiQuantAgent:
         self._init_client()
 
     def _init_client(self):
-        """Inicializa el cliente de Gemini si la clave está disponible."""
+        """Inicializa el cliente de Gemini si la clave está disponible con selección de modelos resiliente."""
         if not self.api_key or "TuClave" in self.api_key:
             return
 
         try:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-1.5-flash")
+            self._genai = genai
+            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-1.5-flash"), "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash"]
+            self.model = genai.GenerativeModel(self.model_names[0])
         except Exception as e:
             print(f"[GeminiAgent] Advertencia al inicializar Gemini: {e}")
 
@@ -81,14 +83,17 @@ INSTRUCCIONES:
 3. Párrafo 3: Recomendación operativa final para el Bot (BUY/SELL/HOLD) y justificación institucional.
 """
 
-        # Intento con API real de Gemini si está disponible
-        if self.model:
-            try:
-                response = self.model.generate_content(prompt)
-                if response and response.text:
-                    return response.text.strip()
-            except Exception as e:
-                print(f"[GeminiAgent] Excepción al invocar Gemini: {e}. Usando generador cuantitativo local.")
+        # Intento con API real de Gemini probando modelos compatibles
+        if hasattr(self, '_genai') and self._genai:
+            for m_name in getattr(self, 'model_names', ['gemini-1.5-flash', 'gemini-pro']):
+                try:
+                    m = self._genai.GenerativeModel(m_name)
+                    response = m.generate_content(prompt)
+                    if response and response.text:
+                        self.model = m
+                        return response.text.strip()
+                except Exception:
+                    continue
 
         # Fallback analítico de alta calidad (100% garantizado sin red externa)
         sentiment_desc = "alcista estructurada" if signal == "BUY" else ("bajista correctiva" if signal == "SELL" else "de consolidación neutral")

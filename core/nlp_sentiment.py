@@ -52,14 +52,16 @@ class NLPSentimentAnalyzer:
         self._init_gemini()
 
     def _init_gemini(self):
-        """Inicializa el cliente de Gemini si la API key está disponible."""
+        """Inicializa el cliente de Gemini si la API key está disponible con selección resiliente de modelos."""
         if not self.api_key or "TuClave" in self.api_key or len(self.api_key) < 15:
             return
 
         try:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel("gemini-1.5-flash")
+            self._genai = genai
+            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-1.5-flash"), "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash"]
+            self.model = genai.GenerativeModel(self.model_names[0])
         except Exception as e:
             logger.warning(f"[NLPSentiment] Error inicializando Gemini: {e}")
 
@@ -128,23 +130,25 @@ Analiza la semántica, el tono y el impacto macroeconómico. Devuelve ÚNICAMENT
 }}
 """
 
-        if self.model:
-            try:
-                response = self.model.generate_content(prompt)
-                raw_text = response.text.strip()
-                # Limpiar backticks si Gemini los incluyó
-                if "```json" in raw_text:
-                    raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                elif "```" in raw_text:
-                    raw_text = raw_text.split("```")[1].split("```")[0].strip()
+        if hasattr(self, '_genai') and self._genai:
+            for m_name in getattr(self, 'model_names', ['gemini-1.5-flash', 'gemini-pro']):
+                try:
+                    m = self._genai.GenerativeModel(m_name)
+                    response = m.generate_content(prompt)
+                    raw_text = response.text.strip()
+                    if "```json" in raw_text:
+                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                    elif "```" in raw_text:
+                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
 
-                parsed = json.loads(raw_text)
-                parsed["ticker"] = clean
-                parsed["headlines"] = news_list
-                parsed["analyzed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                return parsed
-            except Exception as e:
-                logger.warning(f"[NLPSentiment] Error en inferencia de Gemini NLP: {e}. Usando evaluador semántico local.")
+                    parsed = json.loads(raw_text)
+                    parsed["ticker"] = clean
+                    parsed["headlines"] = news_list
+                    parsed["analyzed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    self.model = m
+                    return parsed
+                except Exception:
+                    continue
 
         # Evaluador semántico determinístico de contingencia
         bullish_words = ["incrementan", "compras", "máximos", "récord", "supera", "resilientes", "adopción", "eleva", "crecimiento"]
