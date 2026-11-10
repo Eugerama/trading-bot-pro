@@ -104,8 +104,11 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
         import google.generativeai as genai
         genai.configure(api_key=key)
 
-        # 1. Descubrimiento dinámico de modelos autorizados por Google para esta clave
-        candidates = []
+        # 1. Agregar modelos de última generación en orden de máxima prioridad
+        preferred = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+        candidates = [preferred, "gemini-3.8-flash", "models/gemini-3.8-flash"]
+
+        # 2. Descubrimiento dinámico de modelos adicionales autorizados por Google
         try:
             for m in genai.list_models():
                 methods = getattr(m, 'supported_generation_methods', [])
@@ -116,9 +119,7 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
         except Exception:
             pass
 
-        # 2. Agregar modelos estándar en orden de prioridad
-        preferred = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-        for std in [preferred, "gemini-2.5-flash", "models/gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
+        for std in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
             if std not in candidates:
                 candidates.append(std)
 
@@ -485,7 +486,10 @@ class TelegramTradingBot:
         ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
         status_msg = await update.message.reply_text(f"⏳ Analizando mercado, ML y NLP para *{ticker}*...", parse_mode="Markdown")
         msg = await self._generate_signal_message(ticker)
-        await status_msg.edit_text(msg, parse_mode="Markdown")
+        try:
+            await status_msg.edit_text(msg, parse_mode="Markdown")
+        except Exception:
+            await status_msg.edit_text(msg.replace("**", "").replace("*", ""))
 
     async def _generate_signal_message(self, ticker: str) -> str:
         try:
@@ -851,7 +855,10 @@ INSTRUCCIONES DE RESPUESTA:
 
             if ai_text:
                 reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
-                await update.message.reply_text(reply, parse_mode="Markdown")
+                try:
+                    await update.message.reply_text(reply, parse_mode="Markdown")
+                except Exception:
+                    await update.message.reply_text(reply.replace("**", "").replace("*", "• "))
                 return
 
             # Si la API no respondió texto pero tampoco arrojó error fatal
@@ -862,16 +869,6 @@ INSTRUCCIONES DE RESPUESTA:
             )
             reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
             await update.message.reply_text(reply, parse_mode="Markdown")
-        except Exception as e:
-            logger.error(f"[TelegramGemini] Error al consultar Gemini: {e}")
-            fallback = (
-                f"🧠 *ANÁLISIS CUANTITATIVO (MODO RESILIENCIA)*\n\n"
-                f"Respecto a tu consulta sobre *{question}*:\n"
-                f"El bot mantiene una postura estadística disciplinada sobre *{active_ticker}*. "
-                f"Las decisiones se ejecutan únicamente cuando coinciden la señal del clasificador Random Forest (certeza > 55%), "
-                f"la pendiente de la regresión lineal y una relación Beneficio/Riesgo calculada por ATR superior a 1.67x."
-            )
-            await update.message.reply_text(fallback, parse_mode="Markdown")
         except Exception as e:
             logger.error(f"[TelegramGemini] Error al consultar Gemini: {e}")
             fallback = (
@@ -917,7 +914,10 @@ INSTRUCCIONES DE RESPUESTA:
             t = tickers[0] if tickers else "BTCUSDT"
             status_m = await query.message.reply_text(f"⏳ Evaluando señal cuantitativa para *{t}*...", parse_mode="Markdown")
             msg = await self._generate_signal_message(t)
-            await status_m.edit_text(msg, parse_mode="Markdown")
+            try:
+                await status_m.edit_text(msg, parse_mode="Markdown")
+            except Exception:
+                await status_m.edit_text(msg.replace("**", "").replace("*", ""))
 
         elif action == "btn_montecarlo":
             tickers = self.watchlist_mgr.get_tickers()
