@@ -117,8 +117,8 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
             pass
 
         # 2. Agregar modelos estándar en orden de prioridad
-        preferred = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-        for std in [preferred, "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.5-pro"]:
+        preferred = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+        for std in [preferred, "gemini-2.5-flash", "models/gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
             if std not in candidates:
                 candidates.append(std)
 

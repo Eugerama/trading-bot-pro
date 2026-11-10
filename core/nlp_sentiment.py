@@ -60,7 +60,7 @@ class NLPSentimentAnalyzer:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
             self._genai = genai
-            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-1.5-flash"), "gemini-1.5-flash-latest", "gemini-pro", "gemini-1.5-pro", "gemini-2.0-flash"]
+            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-2.5-flash"), "models/gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]
             self.model = genai.GenerativeModel(self.model_names[0])
         except Exception as e:
             logger.warning(f"[NLPSentiment] Error inicializando Gemini: {e}")
