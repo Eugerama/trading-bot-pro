@@ -20,11 +20,11 @@ class GeminiQuantAgent:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = None
         self._cache: Dict[str, Any] = {}
-        self._cache_ttl = 300  # 5 minutos de caché para no saturar cuota desde el Dashboard Web
+        self._cache_ttl = 3600  # 60 minutos de caché en web para reservar la cuota a Telegram
         self._init_client()
 
     def _init_client(self):
-        """Inicializa el cliente de Gemini directamente con el modelo activo."""
+        """Inicializa el cliente de Gemini directamente con gemini-3.5-flash-lite."""
         if not self.api_key or "TuClave" in self.api_key:
             return
 
@@ -32,7 +32,7 @@ class GeminiQuantAgent:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
             self._genai = genai
-            model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            model_name = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
             self.model = genai.GenerativeModel(model_name)
         except Exception as e:
             print(f"[GeminiAgent] Advertencia al inicializar Gemini: {e}")
@@ -94,7 +94,8 @@ INSTRUCCIONES:
 3. Párrafo 3: Recomendación operativa final para el Bot (BUY/SELL/HOLD) y justificación institucional.
 """
 
-        # Intento directo con Gemini 3.8 Flash con timeout estricto de 8 segundos
+        # 100% prioridad a la cuota de Telegram: en el Dashboard Web usamos caché de 60 min
+        # y también guardamos en caché el análisis cuantitativo para no bombardear la API cada 15s
         if self.model:
             try:
                 response = self.model.generate_content(prompt, request_options={"timeout": 8.0})
@@ -103,7 +104,7 @@ INSTRUCCIONES:
                     self._cache[clean_sym] = (now, res_text)
                     return res_text
             except Exception as e:
-                print(f"[GeminiAgent] Timeout o cuota alcanzada para {clean_sym}: {e}. Usando generador local.")
+                print(f"[GeminiAgent] Usando generador local para {clean_sym} ({e}).")
 
         # Fallback analítico de alta calidad (100% garantizado sin red externa)
         sentiment_desc = "alcista estructurada" if signal == "BUY" else ("bajista correctiva" if signal == "SELL" else "de consolidación neutral")
@@ -126,5 +127,7 @@ INSTRUCCIONES:
             f"Parámetros recomendados: SL @ ${sl:,.2f} | TP @ ${tp:,.2f}."
         )
 
+        # Guardar también en caché por 60 min para evitar que el polling cada 15s agote la cuota de Gemini
+        self._cache[clean_sym] = (now, local_analysis)
         return local_analysis
 

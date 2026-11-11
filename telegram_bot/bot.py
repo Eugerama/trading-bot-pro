@@ -95,7 +95,7 @@ logger = logging.getLogger("TelegramChatOps")
 
 
 def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Optional[str]:
-    """Invoca la API de Gemini directamente con el modelo activo gemini-3.8-flash y timeout estricto."""
+    """Invoca la API de Gemini directamente con el modelo gemini-3.5-flash-lite y timeout estricto."""
     key = api_key or os.getenv("GEMINI_API_KEY", "")
     if not key or len(key) < 15 or "TuClave" in key:
         return None
@@ -104,8 +104,15 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
         import google.generativeai as genai
         genai.configure(api_key=key)
 
-        preferred = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-        candidates = [preferred, "gemini-3.8-flash", "models/gemini-3.8-flash"]
+        preferred = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+        candidates = [
+            preferred,
+            "gemini-3.5-flash-lite",
+            "models/gemini-3.5-flash-lite",
+            "gemini-3.5-flash-lite-preview",
+            "gemini-2.5-flash-lite",
+            "gemini-2.0-flash-lite"
+        ]
         # Eliminar duplicados manteniendo orden
         unique_candidates = list(dict.fromkeys(candidates))
 

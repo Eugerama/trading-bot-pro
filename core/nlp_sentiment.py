@@ -51,11 +51,11 @@ class NLPSentimentAnalyzer:
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = None
         self._cache = {}
-        self._cache_ttl = 300  # 5 minutos de caché para evitar saturar la cuota RPM de Gemini
+        self._cache_ttl = 3600  # 60 minutos de caché para reservar la cuota de Gemini a Telegram
         self._init_gemini()
 
     def _init_gemini(self):
-        """Inicializa el cliente de Gemini si la API key está disponible directamente con gemini-3.8-flash."""
+        """Inicializa el cliente de Gemini si la API key está disponible directamente con gemini-3.5-flash-lite."""
         if not self.api_key or "TuClave" in self.api_key or len(self.api_key) < 15:
             return
 
@@ -63,7 +63,7 @@ class NLPSentimentAnalyzer:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
             self._genai = genai
-            self.model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-3.8-flash"))
+            self.model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite"))
         except Exception as e:
             logger.warning(f"[NLPSentiment] Error inicializando Gemini: {e}")
 
@@ -183,7 +183,7 @@ Analiza la semántica, el tono y el impacto macroeconómico. Devuelve ÚNICAMENT
         else:
             classification = "NEUTRAL"
 
-        return {
+        fallback_res = {
             "ticker": clean,
             "sentiment_score": score,
             "classification": classification,
@@ -194,4 +194,6 @@ Analiza la semántica, el tono y el impacto macroeconómico. Devuelve ÚNICAMENT
             "headlines": news_list,
             "analyzed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
+        self._cache[clean] = (fallback_res, time.time())
+        return fallback_res
 
