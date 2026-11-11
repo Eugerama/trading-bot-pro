@@ -320,8 +320,19 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
     )
     current_price = ml_pred['latest_close']
 
-    # 5. Actualizar posiciones activas y chequear SL/TP
-    execution_engine.update_and_check_positions(clean_ticker, current_price)
+    # 5. Actualizar posiciones activas y chequear SL/TP (notificando a Telegram si alguna se cierra)
+    closed_trades = execution_engine.update_and_check_positions(clean_ticker, current_price)
+    for closed in closed_trades:
+        if telegram_bot.app and telegram_bot.is_running and telegram_bot._loop:
+            import asyncio
+            msg = (
+                f"🔔 *ALERTA DE CIERRE DE POSICIÓN*\n"
+                f"• Ticker: *{closed['ticker']}*\n"
+                f"• Motivo: `{closed['exit_reason']}`\n"
+                f"• Salida: `${closed['exit_price']:,.2f}`\n"
+                f"• PnL Realizado: `${closed['pnl']:+,.2f} ({closed['roi_pct']:+.2f}%)`"
+            )
+            asyncio.run_coroutine_threadsafe(telegram_bot.send_alert(msg), telegram_bot._loop)
 
     # 6. Parámetros de riesgo
     risk_eval = risk_manager.calculate_trade_parameters(
@@ -433,9 +444,9 @@ async def api_create_order(
             f"• Activo: *{clean_ticker}* ({side})\n"
             f"• Precio: `${price:,.2f}` | SL: `${risk['stop_loss']:,.2f}` | TP: `${risk['take_profit']:,.2f}`"
         )
-        if telegram_bot.app:
+        if telegram_bot.app and telegram_bot._loop:
             import asyncio
-            asyncio.create_task(telegram_bot.send_alert(msg))
+            asyncio.run_coroutine_threadsafe(telegram_bot.send_alert(msg), telegram_bot._loop)
 
     return res
 
@@ -449,6 +460,15 @@ async def api_close_position(
     clean_ticker = ticker.upper().strip()
     price = get_current_price(clean_ticker)
     closed = execution_engine.close_position(clean_ticker, price, f"MANUAL_WEB_{user.upper()}")
+    if closed and telegram_bot.app and telegram_bot._loop:
+        import asyncio
+        msg = (
+            f"🚪 *POSICIÓN CERRADA DESDE DASHBOARD WEB*\n"
+            f"• Ticker: *{clean_ticker}*\n"
+            f"• Salida: `${price:,.2f}`\n"
+            f"• PnL Realizado: `${closed['pnl']:+,.2f} ({closed['roi_pct']:+.2f}%)`"
+        )
+        asyncio.run_coroutine_threadsafe(telegram_bot.send_alert(msg), telegram_bot._loop)
     return {"success": bool(closed), "trade": closed}
 
 

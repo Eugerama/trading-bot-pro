@@ -229,6 +229,14 @@ class TelegramTradingBot:
     ):
         self.token = token or os.getenv("TELEGRAM_BOT_TOKEN", "")
         self.chat_id = chat_id or os.getenv("TELEGRAM_CHAT_ID", "")
+        if os.path.exists("chat_id.txt"):
+            try:
+                with open("chat_id.txt", "r") as f:
+                    saved_id = f.read().strip()
+                    if saved_id:
+                        self.chat_id = saved_id
+            except Exception:
+                pass
         self.engine = engine or ExecutionEngine()
         self.ml_engine = ml_engine or QuantitativeMLEngine()
         self.gemini_agent = gemini_agent or GeminiQuantAgent()
@@ -357,14 +365,28 @@ class TelegramTradingBot:
             logger.error(f"[TelegramBot] Error en ciclo de polling de Telegram: {e}")
             self.is_running = False
 
+    def _register_chat_id(self, update: Update):
+        """Detecta y guarda automáticamente el chat_id real del usuario al interactuar con el bot."""
+        try:
+            if update and update.effective_chat and update.effective_chat.id:
+                real_id = str(update.effective_chat.id)
+                if real_id != str(self.chat_id):
+                    self.chat_id = real_id
+                    os.environ["TELEGRAM_CHAT_ID"] = real_id
+                    with open("chat_id.txt", "w") as f:
+                        f.write(real_id)
+                    logger.info(f"[TelegramBot] ✅ chat_id real vinculado automáticamente: {real_id}")
+        except Exception as e:
+            logger.debug(f"Error guardando chat_id: {e}")
+
     async def send_alert(self, message: str):
-        """Envía una alerta proactiva al canal o chat_id configurado."""
+        """Envía una alerta proactiva al canal o chat_id configurado con fallback a texto plano."""
         if not self.app or not self.chat_id:
             logger.info(f"[Mock Telegram Alert]: {message}")
             return
 
+        inline_kb = self.build_main_inline_keyboard()
         try:
-            inline_kb = self.build_main_inline_keyboard()
             await self.app.bot.send_message(
                 chat_id=self.chat_id,
                 text=message,
@@ -372,16 +394,26 @@ class TelegramTradingBot:
                 reply_markup=inline_kb
             )
         except Exception as e:
-            logger.error(f"[TelegramBot] Fallo al enviar mensaje a Telegram: {e}")
+            try:
+                clean_msg = message.replace("*", "").replace("`", "").replace("_", " ")
+                await self.app.bot.send_message(
+                    chat_id=self.chat_id,
+                    text=clean_msg,
+                    reply_markup=inline_kb
+                )
+            except Exception as e2:
+                logger.error(f"[TelegramBot] Fallo al enviar mensaje a Telegram (chat_id={self.chat_id}): {e2}")
 
     # ==========================================================================
     # MANEJADORES DE COMANDOS TELEGRAM
     # ==========================================================================
     async def cmd_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._register_chat_id(update)
         welcome_text = (
             "🚀 *QUANTITATIVE TRADING BOT - GCP COMPUTE ENGINE*\n\n"
             "Sistema autónomo institucional de Trading con Machine Learning (Random Forest), "
             "Validación Diebold-Mariano, Simulación Monte Carlo y Asistente Gemini Enterprise.\n\n"
+            f"🔔 *Notificaciones de Trades Vinculadas a tu Chat ID:* `{self.chat_id}`\n"
             "🔘 *Panel Táctil de Acceso Rápido:* Toca cualquier botón a continuación o abajo en tu teclado.\n"
             "💬 *Preguntas Libres:* Puedes escribir cualquier pregunta técnica o financiera en este chat y la API de Gemini te responderá en vivo."
         )
@@ -392,10 +424,12 @@ class TelegramTradingBot:
             await update.message.reply_text("⌨️ *Menú Táctil Permanente Activado:*", reply_markup=reply_kb)
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        self._register_chat_id(update)
         await self.cmd_start(update, context)
 
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Monitorea recursos de la VM de GCP en tiempo real."""
+        self._register_chat_id(update)
         text = self._build_status_text()
         inline_kb = self.build_main_inline_keyboard()
         await update.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
@@ -821,6 +855,7 @@ class TelegramTradingBot:
 
     async def handle_text_or_ai_question(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Interpreta botones de ReplyKeyboard o responde preguntas con Gemini Enterprise."""
+        self._register_chat_id(update)
         text = update.message.text.strip()
 
         # 1. Mapeo de botones táctiles inferiores
@@ -928,6 +963,7 @@ INSTRUCCIONES DE RESPUESTA:
     # ==========================================================================
     async def handle_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Gestiona las pulsaciones de los botones táctiles interactivos."""
+        self._register_chat_id(update)
         query = update.callback_query
         await query.answer()
 
