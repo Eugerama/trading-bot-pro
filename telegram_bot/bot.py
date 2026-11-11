@@ -554,7 +554,7 @@ class TelegramTradingBot:
 
                 msg += (
                     f"{mkt_icon} *{t}* (`${cur_p:,.2f}`) ➜ `{sig_icon}`\n"
-                    f"   • Score Técnico: `{t_score:+d}` | RF: `{rf_sig} ({rf_conf:.0f}%)`\n"
+                    f"   • Score Técnico: `{t_score:+.2f}` | RF: `{rf_sig} ({rf_conf:.0f}%)`\n"
                 )
             except Exception as e:
                 msg += f"⚠️ *{t}*: Error al escanear ({e})\n"

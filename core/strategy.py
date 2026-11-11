@@ -85,14 +85,37 @@ class HybridQuantStrategy:
             else:
                 tech_score -= 1
 
-        # 2. MACD
+        # 2. MACD con decaimiento exponencial/escalonado según antigüedad del cruce
         if metrics_cfg.get("use_macd", True):
-            if macd > macd_signal:
-                tech_score += 1
-                tech_reasons.append("Cruce alcista MACD")
+            macd_diff = df['macd'] - df['macd_signal']
+            current_bullish = macd > macd_signal
+            bars_since_cross = 1
+            for i in range(len(macd_diff) - 2, -1, -1):
+                was_bullish = float(macd_diff.iloc[i]) > 0
+                if was_bullish == current_bullish:
+                    bars_since_cross += 1
+                else:
+                    break
+
+            if bars_since_cross <= 2:
+                macd_weight = 1.00
+                cross_label = f"recién cruzado hace {bars_since_cross}v (+1.00)"
+            elif bars_since_cross <= 5:
+                macd_weight = 0.70
+                cross_label = f"cruce reciente hace {bars_since_cross}v ({0.70:.2f})"
+            elif bars_since_cross <= 10:
+                macd_weight = 0.40
+                cross_label = f"hace {bars_since_cross}v ({0.40:.2f})"
             else:
-                tech_score -= 1
-                tech_reasons.append("Cruce bajista MACD")
+                macd_weight = 0.15
+                cross_label = f"maduro hace {bars_since_cross}v ({0.15:.2f})"
+
+            if current_bullish:
+                tech_score = round(tech_score + macd_weight, 2)
+                tech_reasons.append(f"MACD alcista ({cross_label})")
+            else:
+                tech_score = round(tech_score - macd_weight, 2)
+                tech_reasons.append(f"MACD bajista ({cross_label})")
 
         # 3. RSI
         if metrics_cfg.get("use_rsi", True):
