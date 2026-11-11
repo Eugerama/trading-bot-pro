@@ -10,6 +10,7 @@ from typing import Dict, Any, Optional
 import pandas as pd
 
 from core.indicators import compute_all_indicators
+from core.monte_carlo import run_monte_carlo_simulation
 
 
 class HybridQuantStrategy:
@@ -43,6 +44,7 @@ class HybridQuantStrategy:
             "use_sar": True,
             "use_lr": True,
             "use_stoch": True,
+            "use_montecarlo": True,
             "use_ml": True,
             "use_nlp": True
         }
@@ -129,9 +131,46 @@ class HybridQuantStrategy:
         # 4. Estocástico
         if metrics_cfg.get("use_stoch", True):
             if stoch_k > stoch_d and stoch_k < 80:
-                tech_score += 1
+                tech_score = round(tech_score + 1.0, 2)
             elif stoch_k < stoch_d and stoch_k > 20:
-                tech_score -= 1
+                tech_score = round(tech_score - 1.0, 2)
+
+        # 4.5. Simulación Monte Carlo integrada al Score Técnico (+0.50 / -0.50)
+        if metrics_cfg.get("use_montecarlo", True):
+            try:
+                eff_atr = max(atr, close * 0.005)
+                tentative_side = "BUY" if tech_score >= 0 else "SELL"
+                if tentative_side == "BUY":
+                    mc_sl = close - (eff_atr * 1.5)
+                    mc_tp = close + (eff_atr * 2.5)
+                else:
+                    mc_sl = close + (eff_atr * 1.5)
+                    mc_tp = close - (eff_atr * 2.5)
+
+                mc_eval = run_monte_carlo_simulation(
+                    df_raw, close, mc_sl, mc_tp,
+                    position_type=tentative_side,
+                    num_simulations=500,
+                    time_horizon_bars=36
+                )
+                exp_ret = mc_eval.get("expected_return", 0.0)
+                prob_tp = mc_eval.get("prob_take_profit", 0.0) * 100.0
+
+                if exp_ret > 0:
+                    if tentative_side == "BUY":
+                        tech_score = round(tech_score + 0.50, 2)
+                        tech_reasons.append(f"Monte Carlo favorable P(TP)={prob_tp:.0f}% (+0.50)")
+                    else:
+                        tech_score = round(tech_score - 0.50, 2)
+                        tech_reasons.append(f"Monte Carlo bajista P(TP)={prob_tp:.0f}% (-0.50)")
+                elif exp_ret < -0.25:
+                    # Si la deriva estocástica contradice la dirección tentativa, resta fuerza
+                    if tentative_side == "BUY":
+                        tech_score = round(tech_score - 0.25, 2)
+                    else:
+                        tech_score = round(tech_score + 0.25, 2)
+            except Exception:
+                pass
 
         # 5. Señal de Machine Learning (si está habilitada)
         if metrics_cfg.get("use_ml", True):
