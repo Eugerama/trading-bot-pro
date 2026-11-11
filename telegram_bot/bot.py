@@ -81,7 +81,7 @@ from core.watchlist_manager import WatchlistManager
 from core.execution_engine import ExecutionEngine
 
 
-# Configuración del Logger dedicado
+# Configuración del Logger dedicado (ocultando httpx para no exponer el token en el log)
 LOG_FILE = "trading_bot.log"
 logging.basicConfig(
     level=logging.INFO,
@@ -91,6 +91,8 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("TelegramChatOps")
 
 
@@ -250,16 +252,19 @@ class TelegramTradingBot:
                 InlineKeyboardButton("⚡ Señal en Vivo", callback_data="btn_signal")
             ],
             [
-                InlineKeyboardButton("📈 Gráfica Técnica", callback_data="btn_chart"),
-                InlineKeyboardButton("🎲 Monte Carlo", callback_data="btn_montecarlo")
+                InlineKeyboardButton("🔍 Escanear Todo", callback_data="btn_scan"),
+                InlineKeyboardButton("📈 Gráfica Técnica", callback_data="btn_chart")
             ],
             [
                 InlineKeyboardButton("💰 Balance & PnL", callback_data="btn_balance"),
                 InlineKeyboardButton("📋 Watchlist", callback_data="btn_watchlist")
             ],
             [
-                InlineKeyboardButton("🤖 Preguntar a Gemini AI", callback_data="btn_ask_help"),
+                InlineKeyboardButton("🎲 Monte Carlo", callback_data="btn_montecarlo"),
                 InlineKeyboardButton("⚙️ Métricas & Sharpe", callback_data="btn_metrics")
+            ],
+            [
+                InlineKeyboardButton("🤖 Preguntar a Gemini AI", callback_data="btn_ask_help")
             ]
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -269,9 +274,10 @@ class TelegramTradingBot:
         if not ReplyKeyboardMarkup:
             return None
         keyboard = [
-            [KeyboardButton("📊 Estado VM"), KeyboardButton("⚡ Señal en Vivo")],
-            [KeyboardButton("📈 Gráfica Activo"), KeyboardButton("💰 Balance & PnL")],
-            [KeyboardButton("🎲 Monte Carlo"), KeyboardButton("🤖 Preguntar a Gemini")]
+            [KeyboardButton("📊 Estado VM"), KeyboardButton("🔍 Escanear Todo")],
+            [KeyboardButton("⚡ Señal en Vivo"), KeyboardButton("📈 Gráfica Activo")],
+            [KeyboardButton("💰 Balance & PnL"), KeyboardButton("🎲 Monte Carlo")],
+            [KeyboardButton("🤖 Preguntar a Gemini")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
 
@@ -303,6 +309,7 @@ class TelegramTradingBot:
             self.app.add_handler(CommandHandler("menu", self.cmd_start))
             self.app.add_handler(CommandHandler("status", self.cmd_status))
             self.app.add_handler(CommandHandler("signal", self.cmd_signal))
+            self.app.add_handler(CommandHandler("scan", self.cmd_scan))
             self.app.add_handler(CommandHandler("chart", self.cmd_chart))
             self.app.add_handler(CommandHandler("grafica", self.cmd_chart))
             self.app.add_handler(CommandHandler("balance", self.cmd_balance))
@@ -484,10 +491,47 @@ class TelegramTradingBot:
         except Exception:
             await status_msg.edit_text(msg.replace("**", "").replace("*", ""))
 
+    async def cmd_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Escanea toda la Watchlist en tiempo real mostrando puntajes técnicos y predicción ML por activo."""
+        status_msg = await update.message.reply_text("🔍 *Escaneando todos los activos de tu Watchlist en vivo...*", parse_mode="Markdown")
+        msg = await asyncio.to_thread(self._generate_scan_message)
+        await status_msg.edit_text(msg, parse_mode="Markdown")
+
+    def _generate_scan_message(self) -> str:
+        items = self.watchlist_mgr.get_all()
+        if not items:
+            return "ℹ️ *Watchlist vacía.* Usa `/watch <TICKER>` para agregar activos."
+
+        msg = "🔍 *RADAR MULTIMERCADO EN VIVO (WATCHLIST)*\n━━━━━━━━━━━━━━━━━━━━━━\n"
+        for item in items:
+            t = item["ticker"]
+            m_info = self.watchlist_mgr.is_market_open(t)
+            try:
+                df = fetch_historical_data(t, period="30d", interval="1h")
+                ml_pred = self.ml_engine.predict_latest(df, ticker=t)
+                strat_eval = self.strategy.evaluate_signals(df, ml_pred)
+                sig = strat_eval["signal"]
+                t_score = strat_eval["tech_score"]
+                rf_sig = ml_pred["signal"]
+                rf_conf = ml_pred["confidence"] * 100
+                cur_p = ml_pred["latest_close"]
+                sig_icon = "🟢 BUY" if sig == "BUY" else ("🔴 SELL" if sig == "SELL" else "⚪ HOLD")
+                mkt_icon = "🟢" if m_info["is_open"] else "🟡"
+
+                msg += (
+                    f"{mkt_icon} *{t}* (`${cur_p:,.2f}`) ➜ `{sig_icon}`\n"
+                    f"   • Score Técnico: `{t_score:+d}` | RF: `{rf_sig} ({rf_conf:.0f}%)`\n"
+                )
+            except Exception as e:
+                msg += f"⚠️ *{t}*: Error al escanear ({e})\n"
+
+        msg += "━━━━━━━━━━━━━━━━━━━━━━\n💡 _Score >= +1 con RF BUY o Score >= +3 dispara compra automática._"
+        return msg
+
     async def _generate_signal_message(self, ticker: str) -> str:
         try:
             df = fetch_historical_data(ticker, period="60d", interval="1h")
-            ml_pred = self.ml_engine.predict_latest(df)
+            ml_pred = self.ml_engine.predict_latest(df, ticker=ticker)
             nlp_res = self.nlp_analyzer.analyze_ticker_sentiment(ticker)
             strat_eval = self.strategy.evaluate_signals(df, ml_pred, nlp_data=nlp_res)
             risk_eval = self.risk_manager.calculate_trade_parameters(
@@ -783,6 +827,9 @@ class TelegramTradingBot:
         if text == "📊 Estado VM":
             await self.cmd_status(update, context)
             return
+        elif text == "🔍 Escanear Todo":
+            await self.cmd_scan(update, context)
+            return
         elif text == "⚡ Señal en Vivo":
             await self.cmd_signal(update, context)
             return
@@ -904,6 +951,11 @@ INSTRUCCIONES DE RESPUESTA:
             text = self._build_watchlist_text()
             inline_kb = self.build_main_inline_keyboard()
             await query.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
+
+        elif action == "btn_scan":
+            status_m = await query.message.reply_text("🔍 *Escaneando todos los activos de la Watchlist...*", parse_mode="Markdown")
+            msg = await asyncio.to_thread(self._generate_scan_message)
+            await status_m.edit_text(msg, parse_mode="Markdown")
 
         elif action == "btn_signal":
             tickers = self.watchlist_mgr.get_tickers()

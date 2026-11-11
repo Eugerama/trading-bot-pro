@@ -18,7 +18,7 @@ import uvicorn
 # Cargar variables de entorno locales si existen
 load_dotenv()
 
-# Configurar logging
+# Configurar logging (ocultando logs de httpx para no exponer el token de Telegram)
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -27,6 +27,8 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("MainOrchestrator")
 
 from core.data_feed import fetch_historical_data, get_current_price
@@ -52,7 +54,7 @@ def background_trading_loop(interval_seconds: int = 45):
     5. Envía alertas push en tiempo real a Telegram y guarda en trading_bot.log.
     """
     logger.info("Iniciando escáner y motor de trading autónomo 24/7 sobre Watchlist dinámica...")
-    strat = HybridQuantStrategy(rf_confidence_threshold=0.55)
+    strat = HybridQuantStrategy(rf_confidence_threshold=0.45)
     risk = RiskManager()
 
     while True:
@@ -65,7 +67,7 @@ def background_trading_loop(interval_seconds: int = 45):
                 # 1. Obtener precio actual
                 current_price = get_current_price(ticker)
 
-                # 2. Verificar y actualizar posiciones activas existentes (SL / TP)
+                # 2. Verificar y actualizar posiciones activas existentes (Trailing SL / TP)
                 closed_trades = execution_engine.update_and_check_positions(ticker, current_price)
                 for closed in closed_trades:
                     msg = (
@@ -83,6 +85,34 @@ def background_trading_loop(interval_seconds: int = 45):
                             telegram_bot._loop
                         )
 
+                # 2.5 Cierre inteligente por reversión de tendencia (asegura ganancias si el mercado gira)
+                if auto_trade_enabled and ticker in execution_engine.active_positions:
+                    pos = execution_engine.active_positions[ticker]
+                    if pos.get("roi_pct", 0.0) >= 0.35:
+                        try:
+                            df_rev = fetch_historical_data(ticker, period="30d", interval="1h")
+                            ml_rev = ml_engine.predict_latest(df_rev, ticker=ticker)
+                            eval_rev = strat.evaluate_signals(df_rev, ml_rev)
+                            rev_sig = eval_rev["signal"]
+                            if (pos["side"] == "BUY" and rev_sig == "SELL") or (pos["side"] == "SELL" and rev_sig == "BUY"):
+                                closed_rev = execution_engine.close_position(ticker, current_price, "REVERSION_TENDENCIA_PROFIT")
+                                if closed_rev:
+                                    rev_msg = (
+                                        f"🎯 *TOMA DE GANANCIA POR REVERSIÓN DE TENDENCIA*\n"
+                                        f"• Ticker: *{ticker}* | Lado previo: `{closed_rev['side']}`\n"
+                                        f"• Salida: `${closed_rev['exit_price']:,.2f}`\n"
+                                        f"• PnL Asegurado: `${closed_rev['pnl']:+,.2f} ({closed_rev['roi_pct']:+.2f}%)`"
+                                    )
+                                    logger.info(f"Posición cerrada por reversión en {ticker}: PnL ${closed_rev['pnl']}")
+                                    if telegram_bot.app and telegram_bot.is_running:
+                                        import asyncio
+                                        asyncio.run_coroutine_threadsafe(
+                                            telegram_bot.send_alert(rev_msg),
+                                            telegram_bot._loop
+                                        )
+                        except Exception:
+                            pass
+
                 # 3. ESCÁNER AUTÓNOMO DE NUEVAS OPORTUNIDADES
                 # Si el auto-trading está activo y NO hay posición abierta para este ticker:
                 if auto_trade_enabled and ticker not in execution_engine.active_positions:
@@ -95,7 +125,7 @@ def background_trading_loop(interval_seconds: int = 45):
 
                     try:
                         df = fetch_historical_data(ticker, period="30d", interval="1h")
-                        ml_pred = ml_engine.predict_latest(df)
+                        ml_pred = ml_engine.predict_latest(df, ticker=ticker)
                         strat_eval = strat.evaluate_signals(df, ml_pred)
                         signal = strat_eval["signal"]
 

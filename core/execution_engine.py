@@ -210,6 +210,19 @@ class ExecutionEngine:
         pos["pnl"] = round(raw_pnl, 2)
         pos["roi_pct"] = round(roi, 2)
 
+        # Trailing Stop Dinámico (Break-Even + 0.20% cuando el trade supera +0.80% de ganancia)
+        if roi >= 0.80:
+            if side == "BUY":
+                new_sl = round(entry * 1.002, 4)
+                if new_sl > sl:
+                    pos["stop_loss"] = new_sl
+                    sl = new_sl
+            else:
+                new_sl = round(entry * 0.998, 4)
+                if new_sl < sl:
+                    pos["stop_loss"] = new_sl
+                    sl = new_sl
+
         # Chequeo de condiciones de salida
         should_close = False
         exit_reason = ""

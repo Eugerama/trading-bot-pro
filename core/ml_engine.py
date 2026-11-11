@@ -194,7 +194,7 @@ FEATURE_COLUMNS = [
 ]
 
 
-def prepare_features_and_target(df_raw: pd.DataFrame, forward_bars: int = 3, threshold: float = 0.005) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
+def prepare_features_and_target(df_raw: pd.DataFrame, forward_bars: int = 3, threshold: float = 0.003) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
     """
     Prepara features técnicas y targets para clasificación (1: BUY, 0: HOLD, -1: SELL)
     y para regresión (retorno futuro continuo).
@@ -293,6 +293,7 @@ def simulate_hyperparameters_grid(
                 n_estimators=config['n_estimators'],
                 max_depth=config['max_depth'],
                 min_samples_split=config['min_samples_split'],
+                class_weight="balanced",
                 random_state=42,
                 n_jobs=-1
             )
@@ -357,6 +358,7 @@ class QuantitativeMLEngine:
     def __init__(self):
         self.rf_model: Optional[RandomForestClassifier] = None
         self.knn_model: Optional[KNeighborsClassifier] = None
+        self.models_by_key: Dict[str, Any] = {}
         self.feature_names = FEATURE_COLUMNS
         self.last_metrics: Dict[str, Any] = {}
         self.dm_test_result: Dict[str, Any] = {}
@@ -409,11 +411,12 @@ class QuantitativeMLEngine:
             }
             return self.last_metrics
 
-        # 2. Entrenar Random Forest óptimo
+        # 2. Entrenar Random Forest óptimo con pesos balanceados para evitar sesgo hacia HOLD
         self.rf_model = RandomForestClassifier(
             n_estimators=best_hp['n_estimators'],
             max_depth=best_hp['max_depth'],
             min_samples_split=best_hp['min_samples_split'],
+            class_weight="balanced",
             random_state=42,
             n_jobs=-1
         )
@@ -466,17 +469,24 @@ class QuantitativeMLEngine:
 
         return self.last_metrics
 
-    def predict_latest(self, df_raw: pd.DataFrame) -> Dict[str, Any]:
-        """Predice la señal para la última vela observada."""
-        if self.rf_model is None:
+    def predict_latest(self, df_raw: pd.DataFrame, ticker: Optional[str] = None) -> Dict[str, Any]:
+        """Predice la señal para la última vela observada entrenando un modelo dedicado por activo/escala."""
+        first_close = max(1.0, float(df_raw['close'].iloc[-1]))
+        model_key = ticker.upper().strip() if ticker else f"scale_{round(math.log10(first_close), 1)}"
+
+        if model_key not in self.models_by_key:
             self.train_and_evaluate(df_raw)
+            if self.rf_model is not None:
+                self.models_by_key[model_key] = self.rf_model
+
+        active_model = self.models_by_key.get(model_key, self.rf_model)
 
         df = compute_all_indicators(df_raw)
         df['dist_ema_21'] = (df['close'] - df['ema_21']) / df['close']
         df['dist_ema_50'] = (df['close'] - df['ema_50']) / df['close']
         df['sar_diff'] = (df['close'] - df['parabolic_sar']) / df['close']
 
-        if not SKLEARN_AVAILABLE or self.rf_model is None:
+        if not SKLEARN_AVAILABLE or active_model is None:
             # Predicción técnica analítica si scikit-learn no está disponible
             rsi_val = float(df['rsi_14'].iloc[-1])
             macd_val = float(df['macd'].iloc[-1])
@@ -503,11 +513,11 @@ class QuantitativeMLEngine:
             }
 
         latest_row = df[self.feature_names].iloc[-1:].to_numpy()
-        pred_class = int(self.rf_model.predict(latest_row)[0])
-        probabilities = self.rf_model.predict_proba(latest_row)[0]
+        pred_class = int(active_model.predict(latest_row)[0])
+        probabilities = active_model.predict_proba(latest_row)[0]
 
         prob_dict = {}
-        for cls, prob in zip(self.rf_model.classes_, probabilities):
+        for cls, prob in zip(active_model.classes_, probabilities):
             name = "SELL" if cls == -1 else ("HOLD" if cls == 0 else "BUY")
             prob_dict[name] = round(float(prob), 4)
 

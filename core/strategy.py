@@ -130,6 +130,12 @@ class HybridQuantStrategy:
             elif ml_signal == "SELL" and tech_score <= -1 and ml_conf >= threshold:
                 final_signal = "SELL"
                 reason = f"Confluencia Bajista: RF predice SELL ({ml_conf*100:.1f}%) con debilidad técnica ({', '.join(tech_reasons)})."
+            elif tech_score >= 3 and ml_signal != "SELL":
+                final_signal = "BUY"
+                reason = f"Impulso Técnico Fuerte (+{tech_score}): Alineación total ({', '.join(tech_reasons)}) con RF neutral."
+            elif tech_score <= -3 and ml_signal != "BUY":
+                final_signal = "SELL"
+                reason = f"Impulso Técnico Bajista ({tech_score}): Alineación bajista ({', '.join(tech_reasons)}) con RF neutral."
         else:
             # Si el usuario desactivó ML, decide puramente por indicadores técnicos
             if tech_score >= 2:
