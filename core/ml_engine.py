@@ -10,7 +10,7 @@ Incluye:
 import math
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 try:
     from scipy import stats
