@@ -29,10 +29,12 @@ class RiskManager:
         balance: float,
         current_price: float,
         atr: float,
-        signal: str
+        signal: str,
+        ticker: str = ""
     ) -> Dict[str, Any]:
         """
         Calcula el Stop Loss, Take Profit, tamaño de lote y monto monetario de riesgo.
+        Adapta el espacio de ATR automáticamente si es Cripto (2.0x SL / 3.2x TP) vs Acciones (1.5x SL / 2.5x TP).
         """
         if signal not in ["BUY", "SELL"]:
             return {
@@ -43,8 +45,14 @@ class RiskManager:
         # Asegurar un ATR mínimo positivo
         effective_atr = max(atr, current_price * 0.005)
 
-        sl_distance = effective_atr * self.atr_sl_mult
-        tp_distance = effective_atr * self.atr_tp_mult
+        clean_tk = ticker.upper().strip() if ticker else ""
+        is_crypto = "USDT" in clean_tk or "-USD" in clean_tk or clean_tk in ["BTC", "ETH", "SOL", "BNB", "ADA", "XRP", "DOGE"]
+
+        sl_mult = max(self.atr_sl_mult, 2.0) if is_crypto else self.atr_sl_mult
+        tp_mult = max(self.atr_tp_mult, 3.2) if is_crypto else self.atr_tp_mult
+
+        sl_distance = effective_atr * sl_mult
+        tp_distance = effective_atr * tp_mult
 
         if signal == "BUY":
             stop_loss = current_price - sl_distance

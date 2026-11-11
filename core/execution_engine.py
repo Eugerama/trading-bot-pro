@@ -34,10 +34,6 @@ class ExecutionEngine:
         self.peak_equity = initial_balance
         self.load_state()
 
-        # Si el historial está vacío, inicializar con trades pedagógicos para demo
-        if not self.trade_history and not self.active_positions:
-            self._seed_sample_trades()
-
     def load_state(self):
         """Carga el estado previo desde el disco."""
         if os.path.exists(STATE_FILE):
@@ -210,15 +206,16 @@ class ExecutionEngine:
         pos["pnl"] = round(raw_pnl, 2)
         pos["roi_pct"] = round(roi, 2)
 
-        # Trailing Stop Dinámico (Break-Even + 0.20% cuando el trade supera +0.80% de ganancia)
-        if roi >= 0.80:
-            if side == "BUY":
-                new_sl = round(entry * 1.002, 4)
+        # Trailing Stop Inteligente al 70% del camino al Take Profit (asegurando el 50% de la ganancia)
+        tp_dist = abs(tp - entry)
+        if tp_dist > 0:
+            if side == "BUY" and (current_price - entry) >= 0.70 * tp_dist:
+                new_sl = round(entry + (0.50 * tp_dist), 4)
                 if new_sl > sl:
                     pos["stop_loss"] = new_sl
                     sl = new_sl
-            else:
-                new_sl = round(entry * 0.998, 4)
+            elif side == "SELL" and (entry - current_price) >= 0.70 * tp_dist:
+                new_sl = round(entry - (0.50 * tp_dist), 4)
                 if new_sl < sl:
                     pos["stop_loss"] = new_sl
                     sl = new_sl

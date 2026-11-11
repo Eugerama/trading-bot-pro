@@ -60,6 +60,9 @@ class HybridQuantStrategy:
         macd_signal = float(last_row['macd_signal'])
         sar = float(last_row['parabolic_sar'])
         lr_slope = float(last_row['lr_slope'])
+        lr_r2 = float(last_row['lr_r2'])
+        ema_21 = float(last_row['ema_21'])
+        ema_50 = float(last_row['ema_50'])
         stoch_k = float(last_row['stoch_k'])
         stoch_d = float(last_row['stoch_d'])
         atr = float(last_row['atr_14'])
@@ -180,32 +183,36 @@ class HybridQuantStrategy:
             ml_signal = "HOLD"
             ml_conf = 0.50
 
-        # Confluencia base
+        # Confluencia base con Filtro de Tendencia (EMA 21) y Filtro Anti-Lateral (R² >= 0.15)
         final_signal = "HOLD"
         reason = "Consolidación de indicadores sin consenso decisivo."
 
         threshold = self.rf_confidence_threshold
+        trend_up = close >= ema_21
+        trend_down = close <= ema_21
+        has_trend_quality = lr_r2 >= 0.15
+
         if metrics_cfg.get("use_ml", True):
-            if ml_signal == "BUY" and tech_score >= 1 and ml_conf >= threshold:
+            if has_trend_quality and trend_up and ml_signal == "BUY" and tech_score >= 1.3 and ml_conf >= threshold:
                 final_signal = "BUY"
-                reason = f"Confluencia Alcista: RF predice BUY ({ml_conf*100:.1f}%) con confirmación técnica ({', '.join(tech_reasons)})."
-            elif ml_signal == "SELL" and tech_score <= -1 and ml_conf >= threshold:
+                reason = f"Confluencia Alcista (R²={lr_r2:.2f}, Precio>EMA21): RF BUY ({ml_conf*100:.1f}%) + Técnico ({', '.join(tech_reasons)})."
+            elif has_trend_quality and trend_down and ml_signal == "SELL" and tech_score <= -1.3 and ml_conf >= threshold:
                 final_signal = "SELL"
-                reason = f"Confluencia Bajista: RF predice SELL ({ml_conf*100:.1f}%) con debilidad técnica ({', '.join(tech_reasons)})."
-            elif tech_score >= 3 and ml_signal != "SELL":
+                reason = f"Confluencia Bajista Simétrica (R²={lr_r2:.2f}, Precio<EMA21): RF SELL ({ml_conf*100:.1f}%) + Técnico ({', '.join(tech_reasons)})."
+            elif has_trend_quality and trend_up and tech_score >= 2.65 and ml_signal != "SELL":
                 final_signal = "BUY"
-                reason = f"Impulso Técnico Fuerte (+{tech_score}): Alineación total ({', '.join(tech_reasons)}) con RF neutral."
-            elif tech_score <= -3 and ml_signal != "BUY":
+                reason = f"Impulso Técnico Fuerte (+{tech_score:.2f}, R²={lr_r2:.2f}): Alineación alcista ({', '.join(tech_reasons)})."
+            elif has_trend_quality and trend_down and tech_score <= -2.65 and ml_signal != "BUY":
                 final_signal = "SELL"
-                reason = f"Impulso Técnico Bajista ({tech_score}): Alineación bajista ({', '.join(tech_reasons)}) con RF neutral."
+                reason = f"Impulso Técnico Bajista ({tech_score:.2f}, R²={lr_r2:.2f}): Alineación bajista ({', '.join(tech_reasons)})."
         else:
-            # Si el usuario desactivó ML, decide puramente por indicadores técnicos
-            if tech_score >= 2:
+            # Si el usuario desactivó ML, decide puramente por indicadores técnicos y filtro de tendencia
+            if has_trend_quality and trend_up and tech_score >= 2.0:
                 final_signal = "BUY"
-                reason = f"Confluencia Técnica Alcista: {', '.join(tech_reasons)}."
-            elif tech_score <= -2:
+                reason = f"Confluencia Técnica Alcista (R²={lr_r2:.2f}): {', '.join(tech_reasons)}."
+            elif has_trend_quality and trend_down and tech_score <= -2.0:
                 final_signal = "SELL"
-                reason = f"Confluencia Técnica Bajista: {', '.join(tech_reasons)}."
+                reason = f"Confluencia Técnica Bajista (R²={lr_r2:.2f}): {', '.join(tech_reasons)}."
 
         # 6. FILTRO DE SENTIMIENTO NLP (GEMINI ENTERPRISE)
         nlp_score = 0.0

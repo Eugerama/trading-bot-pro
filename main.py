@@ -135,7 +135,8 @@ def background_trading_loop(interval_seconds: int = 45):
                                 balance=execution_engine.balance,
                                 current_price=current_price,
                                 atr=ml_pred["atr_14"],
-                                signal=signal
+                                signal=signal,
+                                ticker=ticker
                             )
 
                             if trade_risk.get("valid"):
