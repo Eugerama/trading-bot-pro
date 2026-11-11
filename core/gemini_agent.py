@@ -9,6 +9,7 @@ Genera un análisis institucional en lenguaje natural listo para Telegram y el D
 """
 
 import os
+import time
 from typing import Dict, Any, Optional
 
 
@@ -18,10 +19,12 @@ class GeminiQuantAgent:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = None
+        self._cache: Dict[str, Any] = {}
+        self._cache_ttl = 300  # 5 minutos de caché para no saturar cuota desde el Dashboard Web
         self._init_client()
 
     def _init_client(self):
-        """Inicializa el cliente de Gemini si la clave está disponible con selección de modelos resiliente."""
+        """Inicializa el cliente de Gemini directamente con el modelo activo."""
         if not self.api_key or "TuClave" in self.api_key:
             return
 
@@ -29,8 +32,8 @@ class GeminiQuantAgent:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
             self._genai = genai
-            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "gemini-3.8-flash", "models/gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
-            self.model = genai.GenerativeModel(self.model_names[0])
+            model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+            self.model = genai.GenerativeModel(model_name)
         except Exception as e:
             print(f"[GeminiAgent] Advertencia al inicializar Gemini: {e}")
 
@@ -48,6 +51,14 @@ class GeminiQuantAgent:
         Si la API de Gemini no está configurada o falla la conexión, usa un generador
         de lenguaje cuantitativo determinístico para evitar interrupciones en la defensa en vivo.
         """
+        # 1. Revisar caché de 5 minutos para no saturar cuota de Gemini desde el Dashboard Web
+        clean_sym = ticker.upper().strip()
+        now = time.time()
+        if clean_sym in self._cache:
+            cached_ts, cached_text = self._cache[clean_sym]
+            if now - cached_ts < self._cache_ttl:
+                return cached_text
+
         signal = ml_data.get("signal", "HOLD")
         confidence = ml_data.get("confidence", 0.0) * 100
         current_price = tech_data.get("close", 0.0)
@@ -83,17 +94,16 @@ INSTRUCCIONES:
 3. Párrafo 3: Recomendación operativa final para el Bot (BUY/SELL/HOLD) y justificación institucional.
 """
 
-        # Intento con API real de Gemini probando modelos compatibles
-        if hasattr(self, '_genai') and self._genai:
-            for m_name in getattr(self, 'model_names', ['gemini-1.5-flash', 'gemini-pro']):
-                try:
-                    m = self._genai.GenerativeModel(m_name)
-                    response = m.generate_content(prompt)
-                    if response and response.text:
-                        self.model = m
-                        return response.text.strip()
-                except Exception:
-                    continue
+        # Intento directo con Gemini 3.8 Flash con timeout estricto de 8 segundos
+        if self.model:
+            try:
+                response = self.model.generate_content(prompt, request_options={"timeout": 8.0})
+                if response and response.text:
+                    res_text = response.text.strip()
+                    self._cache[clean_sym] = (now, res_text)
+                    return res_text
+            except Exception as e:
+                print(f"[GeminiAgent] Timeout o cuota alcanzada para {clean_sym}: {e}. Usando generador local.")
 
         # Fallback analítico de alta calidad (100% garantizado sin red externa)
         sentiment_desc = "alcista estructurada" if signal == "BUY" else ("bajista correctiva" if signal == "SELL" else "de consolidación neutral")

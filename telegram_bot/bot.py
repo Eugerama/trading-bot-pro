@@ -95,7 +95,7 @@ logger = logging.getLogger("TelegramChatOps")
 
 
 def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Optional[str]:
-    """Invoca la API de Gemini probando automáticamente los modelos activos para la clave."""
+    """Invoca la API de Gemini directamente con el modelo activo gemini-3.8-flash y timeout estricto."""
     key = api_key or os.getenv("GEMINI_API_KEY", "")
     if not key or len(key) < 15 or "TuClave" in key:
         return None
@@ -104,36 +104,22 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
         import google.generativeai as genai
         genai.configure(api_key=key)
 
-        # 1. Agregar modelos de última generación en orden de máxima prioridad
         preferred = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
         candidates = [preferred, "gemini-3.8-flash", "models/gemini-3.8-flash"]
+        # Eliminar duplicados manteniendo orden
+        unique_candidates = list(dict.fromkeys(candidates))
 
-        # 2. Descubrimiento dinámico de modelos adicionales autorizados por Google
-        try:
-            for m in genai.list_models():
-                methods = getattr(m, 'supported_generation_methods', [])
-                if 'generateContent' in methods:
-                    name_clean = m.name.replace("models/", "")
-                    if name_clean not in candidates:
-                        candidates.append(name_clean)
-        except Exception:
-            pass
-
-        for std in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash-latest", "gemini-pro"]:
-            if std not in candidates:
-                candidates.append(std)
-
-        # 3. Intentar generar respuesta con cada candidato disponible
-        for model_name in candidates:
+        for model_name in unique_candidates:
             try:
                 m = genai.GenerativeModel(model_name)
-                response = m.generate_content(prompt)
+                response = m.generate_content(prompt, request_options={"timeout": 10.0})
                 if response and response.text:
                     return response.text.strip()
-            except Exception:
+            except Exception as inner_e:
+                logger.warning(f"[GeminiCall] Intento con {model_name} falló: {inner_e}")
                 continue
     except Exception as e:
-        logger.error(f"[GeminiCall] Error: {e}")
+        logger.error(f"[GeminiCall] Error general: {e}")
 
     return None
 
@@ -814,26 +800,28 @@ class TelegramTradingBot:
         await self.process_gemini_question(update, text)
 
     async def process_gemini_question(self, update: Update, question: str):
-        """Consulta la API de Google Gemini Enterprise con contexto del mercado en vivo."""
+        """Consulta la API de Google Gemini Enterprise en segundo plano sin bloquear el loop de Telegram."""
         await update.message.chat.send_action("typing")
 
         tickers = self.watchlist_mgr.get_tickers()
         active_ticker = tickers[0] if tickers else "BTCUSDT"
-        try:
-            cur_price = get_current_price(active_ticker)
-        except Exception:
-            cur_price = 0.0
+
+        # Obtener precio en memoria instantáneamente sin bloquear en descargas de yfinance
+        cur_price = 0.0
+        if active_ticker in self.engine.active_positions:
+            cur_price = float(self.engine.active_positions[active_ticker].get("current_price", 0.0))
 
         metrics = self.engine.get_portfolio_metrics()
         positions_count = len(self.engine.active_positions)
-        win_rate = metrics.get('win_rate_pct', 0.0)
+        win_rate = metrics.get('win_rate', metrics.get('win_rate_pct', 0.0))
         profit_factor = metrics.get('profit_factor', 1.0)
         sharpe = metrics.get('sharpe_ratio', 1.5)
+        price_str = f"${cur_price:,.2f}" if cur_price > 0 else "Monitoreo en vivo 24/7"
 
         system_prompt = f"""Eres el Asistente Cuantitativo de Inteligencia Artificial impulsado por Google Gemini Enterprise (Vertex AI), integrado en un Bot de Trading Automatizado desplegado en Google Cloud Compute Engine (VM serie E2) para un proyecto integrador universitario de alto nivel.
 
 ESTADO OPERATIVO Y CUANTITATIVO DEL BOT:
-- Activo principal en radar: {active_ticker} (Precio actual: ${cur_price:,.2f})
+- Activo principal en radar: {active_ticker} ({price_str})
 - Balance disponible: ${metrics['balance']:,.2f} USD | Equidad: ${metrics['equity']:,.2f} USD
 - Posiciones abiertas en mercado: {positions_count}
 - Watchlist activa: {', '.join(tickers)}
@@ -851,7 +839,8 @@ INSTRUCCIONES DE RESPUESTA:
 
         try:
             target_key = (self.gemini_agent.api_key if self.gemini_agent else None) or os.getenv("GEMINI_API_KEY", "")
-            ai_text = call_gemini_with_fallback(system_prompt, target_key)
+            # Ejecutar la petición de red de Gemini en un hilo separado para responder en 1-2 segundos sin congelar Telegram
+            ai_text = await asyncio.to_thread(call_gemini_with_fallback, system_prompt, target_key)
 
             if ai_text:
                 reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"

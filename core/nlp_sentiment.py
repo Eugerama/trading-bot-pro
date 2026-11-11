@@ -10,6 +10,7 @@ Analiza:
 
 import os
 import json
+import time
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -49,10 +50,12 @@ class NLPSentimentAnalyzer:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
         self.model = None
+        self._cache = {}
+        self._cache_ttl = 300  # 5 minutos de caché para evitar saturar la cuota RPM de Gemini
         self._init_gemini()
 
     def _init_gemini(self):
-        """Inicializa el cliente de Gemini si la API key está disponible con selección resiliente de modelos."""
+        """Inicializa el cliente de Gemini si la API key está disponible directamente con gemini-3.8-flash."""
         if not self.api_key or "TuClave" in self.api_key or len(self.api_key) < 15:
             return
 
@@ -60,8 +63,7 @@ class NLPSentimentAnalyzer:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
             self._genai = genai
-            self.model_names = [os.getenv("GEMINI_MODEL", "gemini-3.8-flash"), "gemini-3.8-flash", "models/gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]
-            self.model = genai.GenerativeModel(self.model_names[0])
+            self.model = genai.GenerativeModel(os.getenv("GEMINI_MODEL", "gemini-3.8-flash"))
         except Exception as e:
             logger.warning(f"[NLPSentiment] Error inicializando Gemini: {e}")
 
@@ -107,6 +109,13 @@ class NLPSentimentAnalyzer:
         - trade_veto: bool (True si el sentimiento es tan adverso que bloquea órdenes de compra)
         """
         clean = ticker.upper().strip()
+
+        # Retornar análisis desde caché si sigue vigente (< 5 min) para no consumir cuota en polling web
+        if clean in self._cache:
+            cached_res, ts = self._cache[clean]
+            if time.time() - ts < self._cache_ttl:
+                return cached_res
+
         news_list = self.fetch_recent_headlines(clean)
         headlines_text = "\n".join([f"- [{item.get('source', 'Media')}] {item['headline']}" for item in news_list])
 
@@ -130,25 +139,23 @@ Analiza la semántica, el tono y el impacto macroeconómico. Devuelve ÚNICAMENT
 }}
 """
 
-        if hasattr(self, '_genai') and self._genai:
-            for m_name in getattr(self, 'model_names', ['gemini-1.5-flash', 'gemini-pro']):
-                try:
-                    m = self._genai.GenerativeModel(m_name)
-                    response = m.generate_content(prompt)
-                    raw_text = response.text.strip()
-                    if "```json" in raw_text:
-                        raw_text = raw_text.split("```json")[1].split("```")[0].strip()
-                    elif "```" in raw_text:
-                        raw_text = raw_text.split("```")[1].split("```")[0].strip()
+        if self.model is not None:
+            try:
+                response = self.model.generate_content(prompt, request_options={"timeout": 8.0})
+                raw_text = response.text.strip()
+                if "```json" in raw_text:
+                    raw_text = raw_text.split("```json")[1].split("```")[0].strip()
+                elif "```" in raw_text:
+                    raw_text = raw_text.split("```")[1].split("```")[0].strip()
 
-                    parsed = json.loads(raw_text)
-                    parsed["ticker"] = clean
-                    parsed["headlines"] = news_list
-                    parsed["analyzed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    self.model = m
-                    return parsed
-                except Exception:
-                    continue
+                parsed = json.loads(raw_text)
+                parsed["ticker"] = clean
+                parsed["headlines"] = news_list
+                parsed["analyzed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._cache[clean] = (parsed, time.time())
+                return parsed
+            except Exception as e:
+                logger.warning(f"[NLPSentiment] Fallback rápido activado ({e})")
 
         # Evaluador semántico determinístico de contingencia
         bullish_words = ["incrementan", "compras", "máximos", "récord", "supera", "resilientes", "adopción", "eleva", "crecimiento"]
