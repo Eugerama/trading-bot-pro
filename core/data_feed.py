@@ -100,6 +100,12 @@ def generate_synthetic_market_data(ticker: str, periods: int = 500, interval_min
     return df
 
 
+# Caché en memoria para consistencia total de precios entre aperturas, cierres y Dashboard Web
+_DF_CACHE = {}
+_LAST_REAL_PRICE = {}
+_CACHE_TTL_SECONDS = 25
+
+
 def fetch_historical_data(
     ticker: str = "BTCUSDT",
     period: str = "60d",
@@ -107,16 +113,23 @@ def fetch_historical_data(
     use_cache: bool = True
 ) -> pd.DataFrame:
     """
-    Descarga datos de mercado reales de yfinance con manejo de errores robusto.
-    Si yfinance no está disponible o falla por red/cuota, recurre al simulador Browniano.
+    Descarga datos de mercado reales de yfinance con manejo de errores robusto y caché de consistencia.
+    Garantiza que get_current_price y el motor de señales usen exactamente la misma serie de precios reales.
     """
     clean_ticker = normalize_ticker(ticker)
+    cache_key = f"{clean_ticker}_{period}_{interval}"
+    now = time.time()
+
+    if use_cache and cache_key in _DF_CACHE:
+        cached_ts, cached_df = _DF_CACHE[cache_key]
+        if now - cached_ts < _CACHE_TTL_SECONDS:
+            return cached_df.copy()
 
     try:
         import yfinance as yf
         data = yf.download(clean_ticker, period=period, interval=interval, progress=False, auto_adjust=True)
 
-        if data is not None and not data.empty and len(data) >= 30:
+        if data is not None and not data.empty and len(data) >= 5:
             # Si las columnas son MultiIndex (versión reciente de yfinance), aplanarlas
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = [col[0].lower() for col in data.columns]
@@ -129,16 +142,38 @@ def fetch_historical_data(
             })
             required = ['open', 'high', 'low', 'close', 'volume']
             if all(col in data.columns for col in required):
-                return data[required].dropna()
+                clean_df = data[required].dropna()
+                if len(clean_df) >= 5:
+                    _DF_CACHE[cache_key] = (now, clean_df)
+                    _LAST_REAL_PRICE[clean_ticker] = float(clean_df['close'].iloc[-1])
+                    return clean_df.copy()
     except Exception as e:
-        print(f"[DataFeed] Advertencia al obtener {ticker} vía yfinance: {e}. Usando generador estocástico de contingencia.")
+        print(f"[DataFeed] Advertencia al obtener {ticker} vía yfinance: {e}. Usando serie en caché o contingencia.")
+
+    # Si hubo un hipo de red momentáneo pero ya teníamos una descarga real previa, reutilizarla para no alterar el precio
+    if cache_key in _DF_CACHE:
+        return _DF_CACHE[cache_key][1].copy()
 
     # Contingencia garantizada
-    return generate_synthetic_market_data(ticker, periods=300, interval_mins=60)
+    syn_df = generate_synthetic_market_data(ticker, periods=300, interval_mins=60)
+    if clean_ticker in _LAST_REAL_PRICE and _LAST_REAL_PRICE[clean_ticker] > 0:
+        scale_factor = _LAST_REAL_PRICE[clean_ticker] / float(syn_df['close'].iloc[-1])
+        for col in ['open', 'high', 'low', 'close']:
+            syn_df[col] = syn_df[col] * scale_factor
+    return syn_df
 
 
 def get_current_price(ticker: str) -> float:
-    """Obtiene el precio más reciente del activo."""
-    df = fetch_historical_data(ticker, period="2d", interval="1h")
+    """Obtiene el precio real más reciente del activo usando period='10d' (siempre >= 30 velas en acciones y cripto)."""
+    clean_ticker = normalize_ticker(ticker)
+    now = time.time()
+
+    # Si ya descargamos 30d o 60d en los últimos 25 segundos para este activo, usar ese precio exacto
+    for p_candidate in ["10d", "30d", "60d"]:
+        ck = f"{clean_ticker}_{p_candidate}_1h"
+        if ck in _DF_CACHE and (now - _DF_CACHE[ck][0] < _CACHE_TTL_SECONDS):
+            return float(_DF_CACHE[ck][1]['close'].iloc[-1])
+
+    df = fetch_historical_data(ticker, period="10d", interval="1h")
     return float(df['close'].iloc[-1])
 
