@@ -20,6 +20,8 @@ __pycache__/
 trading_bot.log
 logs/
 *.log
+*.pkl
+chat_id.txt
 
 # Archivos del sistema y del IDE
 .DS_Store

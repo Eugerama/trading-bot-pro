@@ -7,7 +7,11 @@ Incluye:
 - Test Estadístico de Diebold-Mariano (Diebold & Mariano 1995, con corrección HLN 1997)
 """
 
+import os
+import time
 import math
+import pickle
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Tuple, Any, Optional
@@ -355,14 +359,78 @@ def simulate_hyperparameters_grid(
 class QuantitativeMLEngine:
     """Motor de ML para predicción y validación estadística con Diebold-Mariano."""
 
+    CACHE_FILE = "ml_models_cache.pkl"
+    REPORT_MD_FILE = "REPORTE_ENTRENAMIENTO_ML.md"
+    RETRAIN_INTERVAL_SEC = 6 * 3600  # Re-entrenar cada 6 horas (Walk-Forward)
+
     def __init__(self):
         self.rf_model: Optional[RandomForestClassifier] = None
         self.knn_model: Optional[KNeighborsClassifier] = None
         self.models_by_key: Dict[str, Any] = {}
+        self.trained_at_by_key: Dict[str, float] = {}
+        self.metrics_by_key: Dict[str, Dict[str, Any]] = {}
         self.feature_names = FEATURE_COLUMNS
         self.last_metrics: Dict[str, Any] = {}
         self.dm_test_result: Dict[str, Any] = {}
         self.simulation_table: List[Dict[str, Any]] = []
+        self._load_cache()
+
+    def _load_cache(self):
+        """Carga modelos y métricas previamente entrenados desde disco para arranque instantáneo."""
+        if os.path.exists(self.CACHE_FILE):
+            try:
+                with open(self.CACHE_FILE, "rb") as f:
+                    data = pickle.load(f)
+                self.models_by_key = data.get("models_by_key", {})
+                self.trained_at_by_key = data.get("trained_at_by_key", {})
+                self.metrics_by_key = data.get("metrics_by_key", {})
+                self.last_metrics = data.get("last_metrics", {})
+                self.dm_test_result = data.get("dm_test_result", {})
+                self.simulation_table = data.get("simulation_table", [])
+                if self.models_by_key:
+                    first_k = next(iter(self.models_by_key))
+                    self.rf_model = self.models_by_key[first_k]
+            except Exception as e:
+                print(f"[MLEngine] Advertencia al cargar caché de modelos: {e}")
+
+    def _save_cache_and_report(self):
+        """Guarda los modelos entrenados en disco (.pkl) y actualiza el reporte legible en Markdown (.md)."""
+        try:
+            with open(self.CACHE_FILE, "wb") as f:
+                pickle.dump({
+                    "models_by_key": self.models_by_key,
+                    "trained_at_by_key": self.trained_at_by_key,
+                    "metrics_by_key": self.metrics_by_key,
+                    "last_metrics": self.last_metrics,
+                    "dm_test_result": self.dm_test_result,
+                    "simulation_table": self.simulation_table
+                }, f)
+        except Exception as e:
+            print(f"[MLEngine] Error guardando caché de modelos: {e}")
+
+        try:
+            lines = [
+                "# 🧠 Reporte en Vivo de Entrenamiento Walk-Forward (Random Forest & Diebold-Mariano)",
+                f"**Última actualización del motor:** `{datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}`  ",
+                f"**Intervalo de auto-reentrenamiento:** Cada `6 horas` con las velas horarias más recientes.\n",
+                "| Activo / Modelo | Fecha de Entrenamiento | Árboles (`n_estimators`) | Profundidad (`max_depth`) | Accuracy | F1-Score | RMSE | Diebold-Mariano (`p-valor`) |",
+                "| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |"
+            ]
+            for tk, m in self.metrics_by_key.items():
+                ts = self.trained_at_by_key.get(tk, 0)
+                dt_str = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S") if ts else "N/A"
+                hp = m.get("best_hyperparameters", {})
+                q_err = m.get("quantitative_errors", {})
+                dm = m.get("diebold_mariano", {})
+                lines.append(
+                    f"| **{tk}** | `{dt_str}` | `{hp.get('n_estimators', 100)}` | `{hp.get('max_depth', 5)}` "
+                    f"| `{m.get('accuracy', 0)*100:.1f}%` | `{m.get('f1_score', 0)*100:.1f}%` "
+                    f"| `{q_err.get('rmse', 0):.5f}` | `p={dm.get('p_value', 0):.4f}` |"
+                )
+            with open(self.REPORT_MD_FILE, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as e:
+            print(f"[MLEngine] Error escribiendo reporte Markdown: {e}")
 
     def train_and_evaluate(self, df_raw: pd.DataFrame) -> Dict[str, Any]:
         """Entrena RF y KNN, simula hiperparámetros y corre el test Diebold-Mariano."""
@@ -470,14 +538,23 @@ class QuantitativeMLEngine:
         return self.last_metrics
 
     def predict_latest(self, df_raw: pd.DataFrame, ticker: Optional[str] = None) -> Dict[str, Any]:
-        """Predice la señal para la última vela observada entrenando un modelo dedicado por activo/escala."""
+        """Predice la señal para la última vela entrenando o re-entrenando cada 6 horas por activo."""
         first_close = max(1.0, float(df_raw['close'].iloc[-1]))
         model_key = ticker.upper().strip() if ticker else f"scale_{round(math.log10(first_close), 1)}"
+        now = time.time()
 
-        if model_key not in self.models_by_key:
-            self.train_and_evaluate(df_raw)
+        needs_retrain = (
+            model_key not in self.models_by_key
+            or (now - self.trained_at_by_key.get(model_key, 0)) > self.RETRAIN_INTERVAL_SEC
+        )
+
+        if needs_retrain:
+            metrics = self.train_and_evaluate(df_raw)
             if self.rf_model is not None:
                 self.models_by_key[model_key] = self.rf_model
+                self.trained_at_by_key[model_key] = now
+                self.metrics_by_key[model_key] = metrics
+                self._save_cache_and_report()
 
         active_model = self.models_by_key.get(model_key, self.rf_model)
 

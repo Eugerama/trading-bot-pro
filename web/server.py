@@ -126,11 +126,14 @@ USER_SETTINGS: Dict[str, Dict[str, Any]] = {}
 @app.on_event("startup")
 def startup_event():
     print("[FastAPI] Inicializando motor cuantitativo y bot de Telegram...")
-    # Entrenar modelo inicial con datos por defecto
+    # Entrenar modelo inicial solo si no existe ya en el caché de disco (< 6 horas)
     try:
-        df_init = fetch_historical_data("BTCUSDT", period="60d", interval="1h")
-        ml_engine.train_and_evaluate(df_init)
-        print("[FastAPI] Modelo Random Forest y Test Diebold-Mariano inicializados.")
+        if "BTCUSDT" not in ml_engine.models_by_key or not ml_engine.last_metrics:
+            df_init = fetch_historical_data("BTCUSDT", period="60d", interval="1h")
+            ml_engine.predict_latest(df_init, ticker="BTCUSDT")
+            print("[FastAPI] Modelo Random Forest y Test Diebold-Mariano inicializados y guardados en disco.")
+        else:
+            print(f"[FastAPI] Modelos ML cargados instantáneamente desde caché ({len(ml_engine.models_by_key)} activos listos).")
     except Exception as e:
         print(f"[FastAPI] Advertencia en inicialización de ML: {e}")
 
