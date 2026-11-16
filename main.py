@@ -136,7 +136,8 @@ def background_trading_loop(interval_seconds: int = 45):
                                 current_price=current_price,
                                 atr=ml_pred["atr_14"],
                                 signal=signal,
-                                ticker=ticker
+                                ticker=ticker,
+                                df=df
                             )
 
                             if trade_risk.get("valid"):
@@ -158,8 +159,8 @@ def background_trading_loop(interval_seconds: int = 45):
                                         f"• Señal: `{'🟢 BUY' if signal == 'BUY' else '🔴 SELL'}` (Random Forest: {ml_pred['confidence']*100:.1f}%)\n"
                                         f"• Entrada: `${current_price:,.2f}`\n"
                                         f"• Tamaño: `{trade_risk['position_size_units']}` unidades (${trade_risk['position_value_usd']:,.2f})\n"
-                                        f"• Stop Loss (ATR): `${trade_risk['stop_loss']:,.2f}` (-{trade_risk['sl_distance_pct']}%)\n"
-                                        f"• Take Profit (ATR): `${trade_risk['take_profit']:,.2f}` (+{trade_risk['tp_distance_pct']}%)\n"
+                                        f"• Stop Loss ({trade_risk['sltp_method']} {trade_risk['sl_atr_mult']}x ATR): `${trade_risk['stop_loss']:,.2f}` (-{trade_risk['sl_distance_pct']}%)\n"
+                                        f"• Take Profit ({trade_risk['sltp_method']} {trade_risk['tp_atr_mult']}x ATR): `${trade_risk['take_profit']:,.2f}` (+{trade_risk['tp_distance_pct']}%)\n"
                                         f"• R/B Ratio: `{trade_risk['risk_reward_ratio']}`\n"
                                         f"• Motivo: _{strat_eval['reason']}_\n"
                                         f"━━━━━━━━━━━━━━━━━━━━━━\n"

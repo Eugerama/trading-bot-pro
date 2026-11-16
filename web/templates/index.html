@@ -641,6 +641,18 @@
                                 </label>
                             </div>
 
+                            <!-- Toggle SL/TP Dinámico con ML -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-amber-400 block">SL/TP Dinámico (ML)</span>
+                                    <span class="text-[11px] text-slate-400">Regresión cuantílica MAE/MFE (si se apaga: ATR fijo)</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-ml-sltp" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
                             <!-- Toggle Monte Carlo -->
                             <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
                                 <div>
@@ -916,6 +928,9 @@
     <!-- SCRIPT PRINCIPAL: RESOLUCIÓN UNIVERSAL TRADINGVIEW + CONFIGURACIÓN + APIs -->
     <script>
         const rawTicker = "{{ active_ticker }}";
+        // Temporalidad de la gráfica (sincronizada con Telegram /tf y /activo)
+        let currentTvInterval = "{{ chart_tv_interval | default('60') }}";
+        let chartSettingsSeenAt = {{ chart_settings_updated_at | default(0) }};
         let monteCarloChartInstance = null;
 
         // =====================================================================
@@ -1001,7 +1016,7 @@
                         new TradingView.widget({
                             "autosize": true,
                             "symbol": resolvedSymbol,
-                            "interval": "60",
+                            "interval": currentTvInterval,
                             "timezone": "America/Mexico_City",
                             "theme": "dark",
                             "style": "1",
@@ -1040,7 +1055,7 @@
                     {"id": "RSI@tv-basicstudies"},
                     {"id": "MACD@tv-basicstudies"}
                 ]));
-                const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedSymbol)}&interval=60&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=0f172a&theme=dark&style=1&timezone=America%2FMexico_City&locale=es&studies=${studiesParam}`;
+                const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedSymbol)}&interval=${encodeURIComponent(currentTvInterval)}&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=0f172a&theme=dark&style=1&timezone=America%2FMexico_City&locale=es&studies=${studiesParam}`;
 
                 wrapper.innerHTML = `
                     <iframe 
@@ -1065,6 +1080,29 @@
 
         function reloadTradingView() {
             loadTradingViewFrame();
+        }
+
+        // Sincronización con Telegram: si se cambió activo/temporalidad desde el bot, actualizar la gráfica
+        async function syncChartSettings() {
+            try {
+                const res = await fetch('/api/chart-settings');
+                if (!res.ok) return;
+                const cs = await res.json();
+                if (!cs.updated_at || cs.updated_at <= chartSettingsSeenAt) return;
+                chartSettingsSeenAt = cs.updated_at;
+
+                if (cs.ticker && cs.ticker !== rawTicker.toUpperCase()) {
+                    // Cambio de activo: recargar todo el dashboard (métricas, ML, Monte Carlo) para el nuevo ticker
+                    window.location.href = `/?ticker=${encodeURIComponent(cs.ticker)}`;
+                    return;
+                }
+                if (cs.tv_interval && cs.tv_interval !== currentTvInterval) {
+                    currentTvInterval = cs.tv_interval;
+                    loadTradingViewFrame();
+                }
+            } catch (e) {
+                console.warn("No se pudo sincronizar la configuración de la gráfica:", e);
+            }
         }
 
         // =====================================================================
@@ -1282,6 +1320,7 @@
                 document.getElementById('cfg-use-ml').checked = s.use_ml !== false;
                 document.getElementById('cfg-use-nlp').checked = s.use_nlp !== false;
                 document.getElementById('cfg-use-mc').checked = s.use_montecarlo !== false;
+                document.getElementById('cfg-use-ml-sltp').checked = s.use_ml_sltp !== false;
 
                 if (s.risk_per_trade_pct) document.getElementById('cfg-risk-pct').value = s.risk_per_trade_pct.toFixed(1);
                 if (s.atr_sl_mult) document.getElementById('cfg-atr-sl').value = s.atr_sl_mult.toFixed(1);
@@ -1307,6 +1346,7 @@
                 use_ml: document.getElementById('cfg-use-ml').checked,
                 use_nlp: document.getElementById('cfg-use-nlp').checked,
                 use_montecarlo: document.getElementById('cfg-use-mc').checked,
+                use_ml_sltp: document.getElementById('cfg-use-ml-sltp').checked,
                 risk_per_trade_pct: parseFloat(document.getElementById('cfg-risk-pct').value),
                 atr_sl_mult: parseFloat(document.getElementById('cfg-atr-sl').value),
                 atr_tp_mult: parseFloat(document.getElementById('cfg-atr-tp').value),
@@ -1432,7 +1472,12 @@
                 if (data.risk_parameters.valid) {
                     document.getElementById('risk-sl').innerText = `$${data.risk_parameters.stop_loss.toLocaleString()}`;
                     document.getElementById('risk-tp').innerText = `$${data.risk_parameters.take_profit.toLocaleString()}`;
-                    document.getElementById('risk-rr').innerText = `R/B: ${data.risk_parameters.risk_reward_ratio}`;
+                    const rp = data.risk_parameters;
+                    const method = rp.sltp_method === 'ML' ? 'ML' : 'ATR';
+                    document.getElementById('risk-rr').innerText = `R/B: ${rp.risk_reward_ratio} · ${method} ${rp.sl_atr_mult}x/${rp.tp_atr_mult}x${rp.ml_low_edge ? ' ⚠️' : ''}`;
+                    document.getElementById('risk-rr').title = rp.ml_low_edge
+                        ? 'ML espera poco recorrido a favor: TP ajustado al R/B mínimo'
+                        : (method === 'ML' ? 'SL/TP calculados por regresión cuantílica (ML)' : 'SL/TP por multiplicadores ATR fijos');
                 }
 
                 // Gemini Analysis
@@ -1757,6 +1802,9 @@
             loadMarketAnalysis();
             loadUserSettings();
             loadWatchlist();
+
+            // Escuchar cambios de gráfica hechos desde Telegram (cada 4 segundos)
+            setInterval(syncChartSettings, 4000);
 
             // Refresco periódico cada 15 segundos
             setInterval(() => {

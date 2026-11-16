@@ -27,6 +27,7 @@ from core.indicators import compute_all_indicators
 from core.ml_engine import QuantitativeMLEngine
 from core.monte_carlo import run_monte_carlo_simulation
 from core.risk_manager import RiskManager
+from core.chart_settings import chart_settings
 from core.strategy import HybridQuantStrategy
 from core.gemini_agent import GeminiQuantAgent
 from core.nlp_sentiment import NLPSentimentAnalyzer
@@ -115,6 +116,7 @@ DEFAULT_SETTINGS = {
     "atr_sl_mult": 1.5,
     "atr_tp_mult": 2.5,
     "rf_confidence_threshold": 55,
+    "use_ml_sltp": True,
     "auto_trade_enabled": True
 }
 USER_SETTINGS: Dict[str, Dict[str, Any]] = {}
@@ -184,14 +186,18 @@ def get_current_user(session_user: Optional[str] = Cookie(None)) -> str:
 @app.get("/", response_class=HTMLResponse)
 async def dashboard_page(
     request: Request,
-    ticker: str = "BTCUSDT",
+    ticker: Optional[str] = None,
     session_user: Optional[str] = Cookie(None)
 ):
     user = session_user if (session_user and session_user in VALID_USERS) else "admin"
-    clean_ticker = ticker.upper().strip()
+    cs = chart_settings.get()
+    # Sin ?ticker= se abre el activo elegido desde Telegram (/activo, /chart)
+    clean_ticker = ticker.upper().strip() if ticker else cs["ticker"]
     return render_template("index.html", request, {
         "username": user,
-        "active_ticker": clean_ticker
+        "active_ticker": clean_ticker,
+        "chart_tv_interval": cs["tv_interval"],
+        "chart_settings_updated_at": cs["updated_at"]
     })
 
 
@@ -262,6 +268,12 @@ async def api_remove_watchlist(ticker: str, user: str = Depends(get_current_user
     return res
 
 
+@app.get("/api/chart-settings")
+async def api_chart_settings(user: str = Depends(get_current_user)):
+    """Activo y temporalidad de la gráfica (modificables desde Telegram con /tf y /activo)."""
+    return chart_settings.get()
+
+
 @app.get("/api/user-settings")
 async def api_get_user_settings(user: str = Depends(get_current_user)):
     """Obtiene la configuración personalizada de métricas y riesgo del usuario."""
@@ -284,6 +296,8 @@ async def api_save_user_settings(request: Request, user: str = Depends(get_curre
         risk_manager.atr_sl_mult = float(cfg["atr_sl_mult"])
     if "atr_tp_mult" in cfg:
         risk_manager.atr_tp_mult = float(cfg["atr_tp_mult"])
+    if "use_ml_sltp" in cfg:
+        risk_manager.use_ml_sltp = bool(cfg["use_ml_sltp"])
     if "rf_confidence_threshold" in cfg:
         strategy.rf_confidence_threshold = float(cfg["rf_confidence_threshold"]) / 100.0
     if "auto_trade_enabled" in cfg:
@@ -339,7 +353,8 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
 
     # 6. Parámetros de riesgo
     risk_eval = risk_manager.calculate_trade_parameters(
-        execution_engine.balance, current_price, ml_pred['atr_14'], strat_eval['signal']
+        execution_engine.balance, current_price, ml_pred['atr_14'], strat_eval['signal'],
+        ticker=clean_ticker, df=df
     )
 
     # 7. Simulación Monte Carlo
@@ -385,7 +400,9 @@ async def api_monte_carlo(
     df_ind = compute_all_indicators(df)
     atr = float(df_ind['atr_14'].iloc[-1])
 
-    risk = risk_manager.calculate_trade_parameters(execution_engine.balance, current_price, atr, "BUY")
+    risk = risk_manager.calculate_trade_parameters(
+        execution_engine.balance, current_price, atr, "BUY", ticker=clean_ticker, df=df
+    )
     sl = risk['stop_loss']
     tp = risk['take_profit']
 
@@ -429,7 +446,9 @@ async def api_create_order(
     df_ind = compute_all_indicators(df)
     atr = float(df_ind['atr_14'].iloc[-1])
 
-    risk = risk_manager.calculate_trade_parameters(execution_engine.balance, price, atr, side)
+    risk = risk_manager.calculate_trade_parameters(
+        execution_engine.balance, price, atr, side, ticker=clean_ticker, df=df
+    )
     res = execution_engine.open_position(
         ticker=clean_ticker,
         side=side,
