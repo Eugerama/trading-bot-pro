@@ -248,8 +248,8 @@ class TelegramTradingBot:
         self.gemini_agent = gemini_agent or GeminiQuantAgent()
         self.nlp_analyzer = NLPSentimentAnalyzer()
         self.watchlist_mgr = watchlist_mgr or WatchlistManager()
-        self.strategy = HybridQuantStrategy()
         self.risk_manager = RiskManager()
+        self.strategy = HybridQuantStrategy(risk_manager=self.risk_manager)
 
         self.app = None
         self.is_running = False
@@ -638,7 +638,7 @@ class TelegramTradingBot:
             try:
                 df = fetch_historical_data(t, period="30d", interval="1h")
                 ml_pred = self.ml_engine.predict_latest(df, ticker=t)
-                strat_eval = self.strategy.evaluate_signals(df, ml_pred)
+                strat_eval = self.strategy.evaluate_signals(df, ml_pred, ticker=t)
                 sig = strat_eval["signal"]
                 t_score = strat_eval["tech_score"]
                 rf_sig = ml_pred["signal"]
@@ -662,7 +662,7 @@ class TelegramTradingBot:
             df = fetch_historical_data(ticker, period="60d", interval="1h")
             ml_pred = self.ml_engine.predict_latest(df, ticker=ticker)
             nlp_res = self.nlp_analyzer.analyze_ticker_sentiment(ticker)
-            strat_eval = self.strategy.evaluate_signals(df, ml_pred, nlp_data=nlp_res)
+            strat_eval = self.strategy.evaluate_signals(df, ml_pred, nlp_data=nlp_res, ticker=ticker)
             risk_eval = self.risk_manager.calculate_trade_parameters(
                 self.engine.balance, ml_pred['latest_close'], ml_pred['atr_14'], strat_eval['signal'],
                 ticker=ticker, df=df

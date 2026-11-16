@@ -83,7 +83,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 execution_engine = ExecutionEngine()
 ml_engine = QuantitativeMLEngine()
 risk_manager = RiskManager()
-strategy = HybridQuantStrategy()
+strategy = HybridQuantStrategy(risk_manager=risk_manager)
 gemini_agent = GeminiQuantAgent()
 nlp_analyzer = NLPSentimentAnalyzer()
 watchlist_mgr = WatchlistManager()
@@ -333,7 +333,8 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
         df_raw=df,
         ml_prediction=ml_pred,
         nlp_data=nlp_res,
-        enabled_metrics=user_cfg
+        enabled_metrics=user_cfg,
+        ticker=clean_ticker
     )
     current_price = ml_pred['latest_close']
 

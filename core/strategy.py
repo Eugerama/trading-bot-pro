@@ -12,6 +12,9 @@ import pandas as pd
 from core.indicators import compute_all_indicators
 from core.monte_carlo import run_monte_carlo_simulation
 
+# Retorno esperado mínimo (en %) de Monte Carlo para sumar ±0.50 al score técnico
+MC_MIN_EXPECTED_RETURN_PCT = 0.10
+
 
 class HybridQuantStrategy:
     """Estrategia algorítmica que fusiona análisis técnico clásico, Machine Learning y NLP."""
@@ -20,18 +23,22 @@ class HybridQuantStrategy:
         self,
         rsi_oversold: float = 35.0,
         rsi_overbought: float = 65.0,
-        rf_confidence_threshold: float = 0.45
+        rf_confidence_threshold: float = 0.45,
+        risk_manager=None
     ):
         self.rsi_oversold = rsi_oversold
         self.rsi_overbought = rsi_overbought
         self.rf_confidence_threshold = rf_confidence_threshold
+        # Si se proporciona, Monte Carlo evalúa los mismos SL/TP que usaría la orden real (ML o ATR)
+        self.risk_manager = risk_manager
 
     def evaluate_signals(
         self,
         df_raw: pd.DataFrame,
         ml_prediction: Dict[str, Any],
         nlp_data: Optional[Dict[str, Any]] = None,
-        enabled_metrics: Optional[Dict[str, bool]] = None
+        enabled_metrics: Optional[Dict[str, bool]] = None,
+        ticker: str = ""
     ) -> Dict[str, Any]:
         """
         Evalúa el estado del mercado considerando las métricas activadas por el usuario
@@ -150,6 +157,15 @@ class HybridQuantStrategy:
                     mc_sl = close + (eff_atr * 1.5)
                     mc_tp = close - (eff_atr * 2.5)
 
+                # Usar los niveles reales de la orden (SL/TP ML o ATR con ajuste cripto) si hay RiskManager
+                if self.risk_manager is not None:
+                    levels = self.risk_manager.calculate_trade_parameters(
+                        10000.0, close, atr, tentative_side, ticker=ticker, df=df_raw
+                    )
+                    if levels.get("valid"):
+                        mc_sl = levels["stop_loss"]
+                        mc_tp = levels["take_profit"]
+
                 mc_eval = run_monte_carlo_simulation(
                     df_raw, close, mc_sl, mc_tp,
                     position_type=tentative_side,
@@ -159,7 +175,9 @@ class HybridQuantStrategy:
                 exp_ret = mc_eval.get("expected_return", 0.0)
                 prob_tp = mc_eval.get("prob_take_profit", 0.0) * 100.0
 
-                if exp_ret > 0:
+                # Zona muerta: con drift reducido el retorno esperado ronda 0 (%), así que sólo
+                # suma si supera el umbral mínimo (evita que el ruido de la simulación decida el voto)
+                if exp_ret > MC_MIN_EXPECTED_RETURN_PCT:
                     if tentative_side == "BUY":
                         tech_score = round(tech_score + 0.50, 2)
                         tech_reasons.append(f"Monte Carlo favorable P(TP)={prob_tp:.0f}% (+0.50)")
