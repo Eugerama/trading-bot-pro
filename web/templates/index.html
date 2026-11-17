@@ -427,6 +427,45 @@
                                 <span id="mc-cvar-95" class="text-lg font-bold text-rose-400">--%</span>
                             </div>
                         </div>
+
+                        <!-- Matriz de Sensibilidad Bidimensional (Stress Testing: Volatilidad σ vs SL/TP ATR) -->
+                        <div class="bg-slate-950/90 p-4 rounded-xl border border-slate-800 space-y-3">
+                            <div class="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                    <h5 class="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                                        <i class="fa-solid fa-table-cells text-cyan-400"></i>
+                                        Análisis de Sensibilidad &amp; Stress Testing (Shock de Volatilidad σ vs. Niveles SL/TP ATR)
+                                    </h5>
+                                    <p class="text-[11px] text-slate-400 mt-0.5" id="mc-sensitivity-conclusion">
+                                        Evaluando robustez estocástica del trade ante cambios en la volatilidad implícita y múltiplos de ATR...
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-2 text-[10px]">
+                                    <span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Verde: E[R] &gt; 0 (Robusto)</span>
+                                    <span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/30">Rojo: E[R] &lt; 0 (Frágil)</span>
+                                    <span class="px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400">★ Óptimo 1.0x σ</span>
+                                </div>
+                            </div>
+
+                            <div class="overflow-x-auto custom-scroll">
+                                <table class="w-full text-xs text-center border-collapse">
+                                    <thead>
+                                        <tr id="mc-sens-thead-row" class="bg-slate-900/90 text-[10px] uppercase text-slate-400 border-b border-slate-800">
+                                            <th class="py-2 px-3 text-left">Escenario Volatilidad (σ)</th>
+                                            <th class="py-2 px-3">SL 1.0x / TP 2.0x</th>
+                                            <th class="py-2 px-3">SL 1.5x / TP 2.5x</th>
+                                            <th class="py-2 px-3">SL 2.0x / TP 3.2x</th>
+                                            <th class="py-2 px-3">SL 2.5x / TP 4.5x</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="mc-sens-tbody" class="divide-y divide-slate-800/70">
+                                        <tr>
+                                            <td colspan="5" class="py-4 text-slate-500">Calculando matriz de sensibilidad 5×4...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- CONTENIDO DE PESTAÑA 4: MACHINE LEARNING & DIEBOLD-MARIANO -->
@@ -1830,6 +1869,60 @@
                         }
                     }
                 });
+
+                // Renderizar Matriz de Sensibilidad 2D (Mapa de Calor Volatilidad vs SL/TP ATR)
+                if (data.sensitivity && data.sensitivity.rows) {
+                    const sens = data.sensitivity;
+                    const concEl = document.getElementById('mc-sensitivity-conclusion');
+                    if (concEl && sens.conclusion) {
+                        concEl.innerText = sens.conclusion;
+                    }
+                    const optR = sens.optimal ? sens.optimal.row_idx : -1;
+                    const optC = sens.optimal ? sens.optimal.col_idx : -1;
+
+                    const tbody = document.getElementById('mc-sens-tbody');
+                    if (tbody) {
+                        tbody.innerHTML = sens.rows.map((row, rIdx) => {
+                            const isBaseRow = row.vol_mult === 1.0;
+                            const rowHeaderClass = isBaseRow ? 'text-cyan-300 font-bold' : 'text-slate-300 font-semibold';
+                            const cellsHtml = row.cells.map((c, cIdx) => {
+                                const er = c.expected_return_pct;
+                                const isOpt = (rIdx === optR && cIdx === optC);
+                                let bgClass = 'bg-slate-900/60 text-slate-300';
+                                if (er >= 0.35) {
+                                    bgClass = 'bg-emerald-950/70 text-emerald-300';
+                                } else if (er > 0.0) {
+                                    bgClass = 'bg-emerald-950/35 text-emerald-400';
+                                } else if (er <= -0.35) {
+                                    bgClass = 'bg-rose-950/65 text-rose-300';
+                                } else if (er < 0.0) {
+                                    bgClass = 'bg-rose-950/30 text-rose-400';
+                                }
+                                const ringClass = isOpt ? 'ring-2 ring-cyan-400 ring-inset' : '';
+                                const starBadge = isOpt ? '<span class="ml-1 text-cyan-300 font-bold" title="Óptimo en volatilidad actual">★</span>' : '';
+                                const sign = er >= 0 ? '+' : '';
+                                return `
+                                    <td class="py-2 px-2.5 ${bgClass} ${ringClass} transition">
+                                        <div class="font-bold text-xs">${sign}${er.toFixed(2)}%${starBadge}</div>
+                                        <div class="text-[10px] text-slate-400 mt-0.5">
+                                            P(TP): <b class="text-slate-200">${c.prob_tp_pct.toFixed(0)}%</b> · VaR: <b class="text-amber-400">${c.var_95_pct.toFixed(1)}%</b>
+                                        </div>
+                                    </td>
+                                `;
+                            }).join('');
+
+                            return `
+                                <tr class="${isBaseRow ? 'bg-slate-900/40' : ''}">
+                                    <td class="py-2 px-3 text-left ${rowHeaderClass}">
+                                        <div>${row.vol_label}</div>
+                                        <div class="text-[10px] text-slate-500 font-normal">σ/vela: ${row.sigma_bar_pct}%</div>
+                                    </td>
+                                    ${cellsHtml}
+                                </tr>
+                            `;
+                        }).join('');
+                    }
+                }
             } catch (e) {
                 console.error("Error al cargar Monte Carlo:", e);
             }

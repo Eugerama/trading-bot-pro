@@ -167,3 +167,160 @@ def run_monte_carlo_simulation(
         )
     }
 
+
+def run_monte_carlo_sensitivity(
+    df: pd.DataFrame,
+    entry_price: float,
+    atr: float,
+    position_type: str = "BUY",
+    num_simulations: int = 400,
+    time_horizon_bars: int = 48,
+    seed: Optional[int] = None
+) -> Dict[str, Any]:
+    """
+    Ejecuta un Análisis de Sensibilidad y Stress Testing Bidimensional (5 x 4):
+    - Filas: Shocks de Volatilidad (0.75x, 1.00x, 1.25x, 1.50x, 2.00x sigma)
+    - Columnas: Configuraciones de Stop Loss / Take Profit en múltiplos de ATR
+      ((1.0, 2.0), (1.5, 2.5), (2.0, 3.2), (2.5, 4.5))
+    """
+    position_type = "SELL" if str(position_type).upper() == "SELL" else "BUY"
+    effective_atr = max(float(atr), entry_price * 0.005)
+
+    log_returns = np.log(df['close'] / df['close'].shift(1)).dropna()
+    hist_log_drift = float(log_returns.mean()) if len(log_returns) else 0.0
+    base_sigma = float(log_returns.std()) if len(log_returns) > 1 else 0.01
+    if not np.isfinite(base_sigma) or base_sigma <= 1e-6:
+        base_sigma = 0.01
+    if not np.isfinite(hist_log_drift):
+        hist_log_drift = 0.0
+
+    vol_scenarios = [
+        {"mult": 0.75, "label": "0.75x σ (Calma)"},
+        {"mult": 1.00, "label": "1.00x σ (Base Actual)"},
+        {"mult": 1.25, "label": "1.25x σ (Moderada)"},
+        {"mult": 1.50, "label": "1.50x σ (Shock +50%)"},
+        {"mult": 2.00, "label": "2.00x σ (Cisne Negro)"},
+    ]
+    sltp_configs = [
+        {"sl_mult": 1.0, "tp_mult": 2.0, "label": "SL 1.0x / TP 2.0x"},
+        {"sl_mult": 1.5, "tp_mult": 2.5, "label": "SL 1.5x / TP 2.5x"},
+        {"sl_mult": 2.0, "tp_mult": 3.2, "label": "SL 2.0x / TP 3.2x"},
+        {"sl_mult": 2.5, "tp_mult": 4.5, "label": "SL 2.5x / TP 4.5x"},
+    ]
+
+    if seed is None:
+        seed = int(entry_price * 100) % 100000
+    rng = np.random.default_rng(seed)
+    base_innovations = rng.standard_normal(size=(num_simulations, time_horizon_bars))
+    uniform_draws = rng.random(size=(num_simulations, time_horizon_bars))
+    log_entry = np.log(entry_price)
+    direction = 1.0 if position_type == "BUY" else -1.0
+    never = time_horizon_bars + 1
+
+    rows: List[Dict[str, Any]] = []
+    best_cell: Optional[Dict[str, Any]] = None
+
+    for r_idx, v_sc in enumerate(vol_scenarios):
+        sigma = base_sigma * v_sc["mult"]
+        drift_cap = MAX_DRIFT_SIGMA_FRACTION * sigma
+        drift = float(np.clip(hist_log_drift * DEFAULT_DRIFT_SHRINKAGE, -drift_cap, drift_cap))
+
+        increments = drift + sigma * base_innovations
+        log_paths = np.hstack([
+            np.full((num_simulations, 1), log_entry),
+            log_entry + np.cumsum(increments, axis=1)
+        ])
+        all_paths = np.exp(log_paths)
+        x0, x1 = log_paths[:, :-1], log_paths[:, 1:]
+
+        def _touch_idx(level: float, upper: bool) -> np.ndarray:
+            log_lvl = np.log(max(level, 1e-8))
+            if upper:
+                closed_beyond = x1 >= log_lvl
+                d0, d1 = log_lvl - x0, log_lvl - x1
+            else:
+                closed_beyond = x1 <= log_lvl
+                d0, d1 = x0 - log_lvl, x1 - log_lvl
+            with np.errstate(over="ignore", invalid="ignore"):
+                p_cross = np.where((d0 > 0) & (d1 > 0), np.exp(-2.0 * d0 * d1 / (sigma ** 2)), 0.0)
+            touched = closed_beyond | (uniform_draws < p_cross)
+            return np.where(touched.any(axis=1), touched.argmax(axis=1) + 1, never)
+
+        cells: List[Dict[str, Any]] = []
+        for c_idx, cfg in enumerate(sltp_configs):
+            sl_dist = effective_atr * cfg["sl_mult"]
+            tp_dist = effective_atr * cfg["tp_mult"]
+            if position_type == "BUY":
+                sl_price = max(entry_price - sl_dist, entry_price * 0.1)
+                tp_price = entry_price + tp_dist
+                tp_idx = _touch_idx(tp_price, upper=True)
+                sl_idx = _touch_idx(sl_price, upper=False)
+            else:
+                sl_price = entry_price + sl_dist
+                tp_price = max(entry_price - tp_dist, entry_price * 0.1)
+                tp_idx = _touch_idx(tp_price, upper=False)
+                sl_idx = _touch_idx(sl_price, upper=True)
+
+            hit_sl = (sl_idx < never) & (sl_idx <= tp_idx)
+            hit_tp = (tp_idx < never) & ~hit_sl
+
+            tp_ret = direction * (tp_price - entry_price) / entry_price
+            sl_ret = direction * (sl_price - entry_price) / entry_price
+            final_ret = direction * (all_paths[:, -1] - entry_price) / entry_price
+            trade_rets = np.where(hit_tp, tp_ret, np.where(hit_sl, sl_ret, final_ret))
+
+            p_tp = float(hit_tp.mean())
+            p_sl = float(hit_sl.mean())
+            exp_ret_pct = round(float(np.mean(trade_rets)) * 100.0, 2)
+            var_95_pct = round(float(np.percentile(trade_rets, 5)) * 100.0, 2)
+            edge = round(p_tp / (p_sl + 1e-5), 2)
+
+            cell_data = {
+                "row_idx": r_idx,
+                "col_idx": c_idx,
+                "vol_mult": v_sc["mult"],
+                "sl_mult": cfg["sl_mult"],
+                "tp_mult": cfg["tp_mult"],
+                "config_label": cfg["label"],
+                "prob_tp_pct": round(p_tp * 100.0, 1),
+                "prob_sl_pct": round(p_sl * 100.0, 1),
+                "expected_return_pct": exp_ret_pct,
+                "var_95_pct": var_95_pct,
+                "edge_ratio": edge,
+            }
+            cells.append(cell_data)
+
+            # Evaluar óptimo en volatilidad base (1.0x)
+            if v_sc["mult"] == 1.00:
+                if best_cell is None or exp_ret_pct > best_cell["expected_return_pct"]:
+                    best_cell = cell_data
+
+        rows.append({
+            "vol_mult": v_sc["mult"],
+            "vol_label": v_sc["label"],
+            "sigma_bar_pct": round(sigma * 100.0, 3),
+            "cells": cells,
+        })
+
+    # Buscar cómo se comporta la columna óptima bajo shock de +50% (1.50x sigma)
+    opt_col = best_cell["col_idx"] if best_cell else 2
+    shock_cell = rows[3]["cells"][opt_col] if len(rows) > 3 else (best_cell or {})
+    opt_label = best_cell["config_label"] if best_cell else "SL 2.0x / TP 3.2x"
+    opt_er = best_cell["expected_return_pct"] if best_cell else 0.0
+    opt_ptp = best_cell["prob_tp_pct"] if best_cell else 0.0
+    shock_er = shock_cell.get("expected_return_pct", 0.0)
+
+    conclusion = (
+        f"Óptimo en régimen actual (1.0x σ): {opt_label} ATR con E[R]={opt_er:+.2f}% y P(TP)={opt_ptp:.1f}%. "
+        f"Bajo shock de estrés (+50% volatilidad, 1.50x σ), dicho perfil registra E[R]={shock_er:+.2f}%."
+    )
+
+    return {
+        "position_type": position_type,
+        "columns": [c["label"] for c in sltp_configs],
+        "rows": rows,
+        "optimal": best_cell,
+        "conclusion": conclusion,
+    }
+
+

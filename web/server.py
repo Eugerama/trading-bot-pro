@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 from core.data_feed import fetch_historical_data, get_current_price, normalize_ticker
 from core.indicators import compute_all_indicators
 from core.ml_engine import QuantitativeMLEngine
-from core.monte_carlo import run_monte_carlo_simulation
+from core.monte_carlo import run_monte_carlo_simulation, run_monte_carlo_sensitivity
 from core.risk_manager import RiskManager
 from core.chart_settings import chart_settings
 from core.strategy import HybridQuantStrategy
@@ -426,6 +426,13 @@ async def api_monte_carlo(
         df, current_price, sl, tp,
         position_type=pos_side,
         num_simulations=min(sims, 2000),
+        time_horizon_bars=horizon,
+        seed=mc_seed
+    )
+    mc_results["sensitivity"] = run_monte_carlo_sensitivity(
+        df, current_price, atr,
+        position_type=pos_side,
+        num_simulations=400,
         time_horizon_bars=horizon,
         seed=mc_seed
     )
