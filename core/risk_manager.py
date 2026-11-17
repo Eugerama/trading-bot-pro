@@ -2,11 +2,25 @@
 Módulo de Gestión Cuantitativa de Riesgo (Risk Management).
 Implementa:
 - Dimensionamiento de posición dinámico por volatilidad ATR y % de riesgo de cuenta
-- Stop Loss y Take Profit dinámicos basados en múltiplos de ATR
+- Stop Loss y Take Profit dinámicos: múltiplos de ATR predichos por Machine Learning
+  (core/ml_sltp.py, regresión cuantílica de MAE/MFE) con fallback a multiplicadores ATR fijos
 - Circuit breaker de Max Drawdown para salvaguardar el capital en la VM
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+import pandas as pd
+
+_DEFAULT_SLTP_MODEL = None
+
+
+def get_default_sltp_model():
+    """Instancia compartida (lazy) del modelo ML de SL/TP para que web, Telegram y main reutilicen el mismo entrenamiento."""
+    global _DEFAULT_SLTP_MODEL
+    if _DEFAULT_SLTP_MODEL is None:
+        from core.ml_sltp import MLStopLossTakeProfit
+        _DEFAULT_SLTP_MODEL = MLStopLossTakeProfit()
+    return _DEFAULT_SLTP_MODEL
 
 
 class RiskManager:
@@ -17,12 +31,22 @@ class RiskManager:
         risk_per_trade_pct: float = 0.02,     # 2% de capital arriesgado por trade
         atr_sl_mult: float = 1.5,             # Multiplicador ATR para Stop Loss
         atr_tp_mult: float = 2.5,             # Multiplicador ATR para Take Profit
-        max_drawdown_limit: float = 0.15      # 15% Max Drawdown Circuit Breaker
+        max_drawdown_limit: float = 0.15,     # 15% Max Drawdown Circuit Breaker
+        use_ml_sltp: bool = True,             # SL/TP predichos por ML cuando hay datos (df)
+        sltp_model=None                       # Inyectable para tests; por defecto instancia compartida
     ):
         self.risk_per_trade_pct = risk_per_trade_pct
         self.atr_sl_mult = atr_sl_mult
         self.atr_tp_mult = atr_tp_mult
         self.max_drawdown_limit = max_drawdown_limit
+        self.use_ml_sltp = use_ml_sltp
+        self._sltp_model = sltp_model
+
+    @property
+    def sltp_model(self):
+        if self._sltp_model is None:
+            self._sltp_model = get_default_sltp_model()
+        return self._sltp_model
 
     def calculate_trade_parameters(
         self,
@@ -30,11 +54,13 @@ class RiskManager:
         current_price: float,
         atr: float,
         signal: str,
-        ticker: str = ""
+        ticker: str = "",
+        df: Optional[pd.DataFrame] = None
     ) -> Dict[str, Any]:
         """
         Calcula el Stop Loss, Take Profit, tamaño de lote y monto monetario de riesgo.
-        Adapta el espacio de ATR automáticamente si es Cripto (2.0x SL / 3.2x TP) vs Acciones (1.5x SL / 2.5x TP).
+        - Si `df` (velas OHLCV) está disponible y use_ml_sltp=True: multiplicadores ATR predichos por ML.
+        - Si no: ATR fijo, adaptado si es Cripto (2.0x SL / 3.2x TP) vs Acciones (1.5x SL / 2.5x TP).
         """
         if signal not in ["BUY", "SELL"]:
             return {
@@ -50,6 +76,20 @@ class RiskManager:
 
         sl_mult = max(self.atr_sl_mult, 2.0) if is_crypto else self.atr_sl_mult
         tp_mult = max(self.atr_tp_mult, 3.2) if is_crypto else self.atr_tp_mult
+        sltp_method = "ATR_FIXED"
+        ml_low_edge = False
+
+        if self.use_ml_sltp and df is not None and len(df) > 0:
+            try:
+                ml_levels = self.sltp_model.predict_multipliers(df, signal, clean_tk)
+            except Exception as e:
+                print(f"[RiskManager] ML-SLTP no disponible, usando ATR fijo: {e}")
+                ml_levels = None
+            if ml_levels:
+                sl_mult = ml_levels["sl_mult"]
+                tp_mult = ml_levels["tp_mult"]
+                sltp_method = "ML"
+                ml_low_edge = ml_levels.get("low_edge", False)
 
         sl_distance = effective_atr * sl_mult
         tp_distance = effective_atr * tp_mult
@@ -89,7 +129,11 @@ class RiskManager:
             "risk_reward_ratio": risk_reward_ratio,
             "position_size_units": position_size,
             "position_value_usd": position_value_usd,
-            "max_risk_usd": round(risk_capital, 2)
+            "max_risk_usd": round(risk_capital, 2),
+            "sltp_method": sltp_method,
+            "sl_atr_mult": round(sl_mult, 2),
+            "tp_atr_mult": round(tp_mult, 2),
+            "ml_low_edge": ml_low_edge
         }
 
     def check_circuit_breaker(self, current_balance: float, peak_balance: float) -> bool:

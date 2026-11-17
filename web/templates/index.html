@@ -641,6 +641,18 @@
                                 </label>
                             </div>
 
+                            <!-- Toggle SL/TP Dinámico con ML -->
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
+                                <div>
+                                    <span class="font-bold text-amber-400 block">SL/TP Dinámico (ML)</span>
+                                    <span class="text-[11px] text-slate-400">Regresión cuantílica MAE/MFE (si se apaga: ATR fijo)</span>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cfg-use-ml-sltp" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
                             <!-- Toggle Monte Carlo -->
                             <div class="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center justify-between">
                                 <div>
@@ -786,15 +798,37 @@
                         </span>
                     </div>
 
-                    <!-- Medidor Horizontal de Sentimiento (-1.0 a +1.0) -->
-                    <div>
-                        <div class="flex items-center justify-between text-[11px] mb-1">
-                            <span class="text-rose-400 font-semibold">Pánico (-1.0)</span>
-                            <span class="text-slate-400 font-mono">Score: <b id="nlp-score-val" class="text-white">+0.45</b></span>
-                            <span class="text-emerald-400 font-semibold">Euforia (+1.0)</span>
-                        </div>
-                        <div class="w-full bg-slate-950 h-2 rounded-full overflow-hidden border border-slate-800 relative">
-                            <div id="nlp-score-bar" class="bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 h-full rounded-full transition-all duration-500" style="width: 72%;"></div>
+                    <!-- Válvula (Gauge) de Sentimiento (-1.0 a +1.0) -->
+                    <div class="flex flex-col items-center">
+                        <svg id="nlp-gauge" viewBox="0 0 200 128" class="w-full max-w-[240px]" role="img" aria-label="Sentimiento: +0.45">
+                            <!-- Zonas: Muy Bajista / Bajista / Neutral / Alcista / Muy Alcista (mismos umbrales que nlp_sentiment.py) -->
+                            <g fill="none" stroke-width="14">
+                                <path d="M 20 100 A 80 80 0 0 1 43.43 43.43" stroke="#f43f5e" />
+                                <path d="M 43.43 43.43 A 80 80 0 0 1 81.33 22.21" stroke="#fb923c" />
+                                <path d="M 81.33 22.21 A 80 80 0 0 1 118.67 22.21" stroke="#64748b" />
+                                <path d="M 118.67 22.21 A 80 80 0 0 1 156.57 43.43" stroke="#4ade80" />
+                                <path d="M 156.57 43.43 A 80 80 0 0 1 180 100" stroke="#10b981" />
+                            </g>
+                            <!-- Separadores entre zonas -->
+                            <g stroke="#0f172a" stroke-width="2">
+                                <line x1="43.43" y1="43.43" x2="33.53" y2="33.53" />
+                                <line x1="81.33" y1="22.21" x2="78.07" y2="8.60" />
+                                <line x1="118.67" y1="22.21" x2="121.93" y2="8.60" />
+                                <line x1="156.57" y1="43.43" x2="166.47" y2="33.53" />
+                            </g>
+                            <!-- Aguja -->
+                            <g id="nlp-gauge-needle" style="transform-box: view-box; transform-origin: 100px 100px; transform: rotate(40.5deg); transition: transform 0.8s cubic-bezier(.34,1.3,.64,1);">
+                                <polygon points="100,26 96,100 104,100" fill="#e2e8f0" />
+                            </g>
+                            <circle cx="100" cy="100" r="9" fill="#e2e8f0" stroke="#0f172a" stroke-width="3" />
+                            <!-- Etiquetas -->
+                            <text x="20" y="120" text-anchor="middle" font-size="10" font-weight="600" fill="#fb7185">-1.0</text>
+                            <text x="180" y="120" text-anchor="middle" font-size="10" font-weight="600" fill="#34d399">+1.0</text>
+                        </svg>
+                        <div class="flex items-center justify-between w-full max-w-[240px] -mt-2 text-[11px]">
+                            <span class="text-rose-400 font-semibold">Pánico</span>
+                            <span class="text-slate-400 font-mono">Score: <b id="nlp-score-val" class="text-white text-sm">+0.45</b></span>
+                            <span class="text-emerald-400 font-semibold">Euforia</span>
                         </div>
                     </div>
 
@@ -916,6 +950,9 @@
     <!-- SCRIPT PRINCIPAL: RESOLUCIÓN UNIVERSAL TRADINGVIEW + CONFIGURACIÓN + APIs -->
     <script>
         const rawTicker = "{{ active_ticker }}";
+        // Temporalidad de la gráfica (sincronizada con Telegram /tf y /activo)
+        let currentTvInterval = "{{ chart_tv_interval | default('60') }}";
+        let chartSettingsSeenAt = {{ chart_settings_updated_at | default(0) }};
         let monteCarloChartInstance = null;
 
         // =====================================================================
@@ -1001,7 +1038,7 @@
                         new TradingView.widget({
                             "autosize": true,
                             "symbol": resolvedSymbol,
-                            "interval": "60",
+                            "interval": currentTvInterval,
                             "timezone": "America/Mexico_City",
                             "theme": "dark",
                             "style": "1",
@@ -1040,7 +1077,7 @@
                     {"id": "RSI@tv-basicstudies"},
                     {"id": "MACD@tv-basicstudies"}
                 ]));
-                const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedSymbol)}&interval=60&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=0f172a&theme=dark&style=1&timezone=America%2FMexico_City&locale=es&studies=${studiesParam}`;
+                const tvUrl = `https://s.tradingview.com/widgetembed/?symbol=${encodeURIComponent(resolvedSymbol)}&interval=${encodeURIComponent(currentTvInterval)}&hidesidetoolbar=0&symboledit=1&saveimage=0&toolbarbg=0f172a&theme=dark&style=1&timezone=America%2FMexico_City&locale=es&studies=${studiesParam}`;
 
                 wrapper.innerHTML = `
                     <iframe 
@@ -1065,6 +1102,29 @@
 
         function reloadTradingView() {
             loadTradingViewFrame();
+        }
+
+        // Sincronización con Telegram: si se cambió activo/temporalidad desde el bot, actualizar la gráfica
+        async function syncChartSettings() {
+            try {
+                const res = await fetch('/api/chart-settings');
+                if (!res.ok) return;
+                const cs = await res.json();
+                if (!cs.updated_at || cs.updated_at <= chartSettingsSeenAt) return;
+                chartSettingsSeenAt = cs.updated_at;
+
+                if (cs.ticker && cs.ticker !== rawTicker.toUpperCase()) {
+                    // Cambio de activo: recargar todo el dashboard (métricas, ML, Monte Carlo) para el nuevo ticker
+                    window.location.href = `/?ticker=${encodeURIComponent(cs.ticker)}`;
+                    return;
+                }
+                if (cs.tv_interval && cs.tv_interval !== currentTvInterval) {
+                    currentTvInterval = cs.tv_interval;
+                    loadTradingViewFrame();
+                }
+            } catch (e) {
+                console.warn("No se pudo sincronizar la configuración de la gráfica:", e);
+            }
         }
 
         // =====================================================================
@@ -1282,6 +1342,7 @@
                 document.getElementById('cfg-use-ml').checked = s.use_ml !== false;
                 document.getElementById('cfg-use-nlp').checked = s.use_nlp !== false;
                 document.getElementById('cfg-use-mc').checked = s.use_montecarlo !== false;
+                document.getElementById('cfg-use-ml-sltp').checked = s.use_ml_sltp !== false;
 
                 if (s.risk_per_trade_pct) document.getElementById('cfg-risk-pct').value = s.risk_per_trade_pct.toFixed(1);
                 if (s.atr_sl_mult) document.getElementById('cfg-atr-sl').value = s.atr_sl_mult.toFixed(1);
@@ -1307,6 +1368,7 @@
                 use_ml: document.getElementById('cfg-use-ml').checked,
                 use_nlp: document.getElementById('cfg-use-nlp').checked,
                 use_montecarlo: document.getElementById('cfg-use-mc').checked,
+                use_ml_sltp: document.getElementById('cfg-use-ml-sltp').checked,
                 risk_per_trade_pct: parseFloat(document.getElementById('cfg-risk-pct').value),
                 atr_sl_mult: parseFloat(document.getElementById('cfg-atr-sl').value),
                 atr_tp_mult: parseFloat(document.getElementById('cfg-atr-tp').value),
@@ -1388,9 +1450,10 @@
                     const score = nlp.sentiment_score;
                     document.getElementById('nlp-score-val').innerText = `${score >= 0 ? '+' : ''}${score.toFixed(2)}`;
                     
-                    // Ajustar posición visual del medidor de sentimiento (-1.0 a +1.0 normalizado a 0% - 100%)
-                    const pct = Math.max(5, Math.min(95, ((score + 1.0) / 2.0) * 100));
-                    document.getElementById('nlp-score-bar').style.width = pct + '%';
+                    // Girar la aguja de la válvula: -1.0 -> -90° (izquierda), 0 -> 0° (arriba), +1.0 -> +90° (derecha)
+                    const clamped = Math.max(-1, Math.min(1, score));
+                    document.getElementById('nlp-gauge-needle').style.transform = `rotate(${clamped * 90}deg)`;
+                    document.getElementById('nlp-gauge').setAttribute('aria-label', `Sentimiento: ${score >= 0 ? '+' : ''}${score.toFixed(2)} (${nlp.classification})`);
 
                     const classBadge = document.getElementById('nlp-class-badge');
                     classBadge.innerText = nlp.classification;
@@ -1432,7 +1495,12 @@
                 if (data.risk_parameters.valid) {
                     document.getElementById('risk-sl').innerText = `$${data.risk_parameters.stop_loss.toLocaleString()}`;
                     document.getElementById('risk-tp').innerText = `$${data.risk_parameters.take_profit.toLocaleString()}`;
-                    document.getElementById('risk-rr').innerText = `R/B: ${data.risk_parameters.risk_reward_ratio}`;
+                    const rp = data.risk_parameters;
+                    const method = rp.sltp_method === 'ML' ? 'ML' : 'ATR';
+                    document.getElementById('risk-rr').innerText = `R/B: ${rp.risk_reward_ratio} · ${method} ${rp.sl_atr_mult}x/${rp.tp_atr_mult}x${rp.ml_low_edge ? ' ⚠️' : ''}`;
+                    document.getElementById('risk-rr').title = rp.ml_low_edge
+                        ? 'ML espera poco recorrido a favor: TP ajustado al R/B mínimo'
+                        : (method === 'ML' ? 'SL/TP calculados por regresión cuantílica (ML)' : 'SL/TP por multiplicadores ATR fijos');
                 }
 
                 // Gemini Analysis
@@ -1757,6 +1825,9 @@
             loadMarketAnalysis();
             loadUserSettings();
             loadWatchlist();
+
+            // Escuchar cambios de gráfica hechos desde Telegram (cada 4 segundos)
+            setInterval(syncChartSettings, 4000);
 
             // Refresco periódico cada 15 segundos
             setInterval(() => {

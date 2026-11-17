@@ -38,6 +38,7 @@ Sistema institucional de trading cuantitativo algorítmico, simulación estocás
    - RSI (Relative Strength Index de Wilder).
    - Oscilador Estocástico (%K, %D) y Bandas de Bollinger.
    - ATR (Average True Range) para Stop Loss dinámico y dimensionamiento de posición.
+   - **SL/TP Dinámico con Machine Learning** (`core/ml_sltp.py`): regresión cuantílica (Gradient Boosting) que predice, por activo, el retroceso máximo (MAE, cuantil 75%) y el recorrido a favor (MFE, mediana) de las próximas 24 velas en múltiplos de ATR. Validación out-of-sample contra multiplicadores ATR fijos, re-entrenamiento cada 6 h y fallback automático a ATR fijo.
 4. **Dashboard Web Interactivo con TradingView:**
    - Gráfico oficial TradingView en tiempo real con selector dinámico de tickers.
    - Autenticación de usuarios multiusuario (Login con roles).
@@ -155,6 +156,9 @@ trading-bot-pro/
 | `/buy <TICKER>` | Ejecuta una orden de compra manual con dimensionamiento ATR |
 | `/sell <TICKER>` | Ejecuta una orden de venta manual |
 | `/close <TICKER>` | Cierra manualmente una posición abierta |
+| `/chart [TICKER] [TF]` | Envía la gráfica técnica y sincroniza el Dashboard (ej. `/chart NVDA 4h`) |
+| `/tf [TF]` | Cambia la temporalidad de la gráfica: `1m 5m 15m 30m 1h 4h 1d 1w` (sin argumento muestra botones) |
+| `/activo [TICKER]` | Cambia el activo de la gráfica en Telegram y en el Dashboard (sin argumento muestra la Watchlist) |
 
 ---
 

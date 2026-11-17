@@ -5,7 +5,7 @@ Implementa:
 - Teclado interactivo con Botones Táctiles (Inline Keyboards y Reply Keyboards persistentes)
 - Generación y envío de Gráficas Financieras de Alta Resolución (Precio, RSI, MACD) en tiempo real
 - Asistente de IA Gemini Enterprise: Responde cualquier pregunta técnica, matemática o de mercado
-- Comandos en vivo: /status, /signal, /chart, /grafica, /balance, /positions, /montecarlo, /metrics, /buy, /sell, /close, /autotrade, /watchlist, /watch, /unwatch, /ask, /gemini
+- Comandos en vivo: /status, /signal, /chart [TICKER] [TF], /grafica, /tf, /activo, /balance, /positions, /montecarlo, /metrics, /buy, /sell, /close, /autotrade, /watchlist, /watch, /unwatch, /ask, /gemini
 - Monitoreo en tiempo real de recursos de la Máquina Virtual de GCP (CPU, RAM, Disco)
 - Gestión dinámica de Watchlist y filtro de horario bursátil
 - Notificaciones push automáticas con formato Markdown estilizado
@@ -19,7 +19,7 @@ import logging
 import asyncio
 import threading
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 
 try:
     import psutil
@@ -79,6 +79,7 @@ from core.gemini_agent import GeminiQuantAgent
 from core.nlp_sentiment import NLPSentimentAnalyzer
 from core.watchlist_manager import WatchlistManager
 from core.execution_engine import ExecutionEngine
+from core.chart_settings import chart_settings, TIMEFRAMES, fetch_chart_data, normalize_timeframe
 
 
 # Configuración del Logger dedicado (ocultando httpx para no exponer el token en el log)
@@ -133,7 +134,7 @@ def call_gemini_with_fallback(prompt: str, api_key: Optional[str] = None) -> Opt
     return None
 
 
-def generate_chart_image(ticker: str, df: pd.DataFrame) -> Optional[io.BytesIO]:
+def generate_chart_image(ticker: str, df: pd.DataFrame, timeframe: str = "1h") -> Optional[io.BytesIO]:
     """Genera una gráfica financiera técnica en modo oscuro institucional con Precio, RSI y MACD."""
     if not MATPLOTLIB_AVAILABLE or df is None or len(df) < 15:
         return None
@@ -153,23 +154,23 @@ def generate_chart_image(ticker: str, df: pd.DataFrame) -> Optional[io.BytesIO]:
         ax_price.set_facecolor('#0f172a')
         ax_price.plot(times, prices, color='#22d3ee', linewidth=2.0, label=f'{ticker} Precio Close')
 
-        if 'linear_regression' in df.columns:
-            ax_price.plot(times, df['linear_regression'], color='#f59e0b', linestyle='--', linewidth=1.5, label='Regresión Lineal OLS')
-        if 'ema_fast' in df.columns:
-            ax_price.plot(times, df['ema_fast'], color='#a855f7', linewidth=1.2, alpha=0.85, label='EMA Rápida (12)')
+        if 'lr_curve' in df.columns:
+            ax_price.plot(times, df['lr_curve'], color='#f59e0b', linestyle='--', linewidth=1.5, label='Regresión Lineal OLS')
+        if 'ema_21' in df.columns:
+            ax_price.plot(times, df['ema_21'], color='#a855f7', linewidth=1.2, alpha=0.85, label='EMA 21')
         if 'parabolic_sar' in df.columns:
             ax_price.scatter(times, df['parabolic_sar'], color='#ec4899', s=9, alpha=0.75, label='SAR Parabólico')
 
         cur_p = prices.iloc[-1]
-        ax_price.set_title(f"ANÁLISIS CUANTITATIVO EN VIVO: {ticker} (Último: ${cur_p:,.2f})", color='#ffffff', fontsize=12, fontweight='bold', pad=10)
+        ax_price.set_title(f"ANÁLISIS CUANTITATIVO EN VIVO: {ticker} [{timeframe}] (Último: ${cur_p:,.2f})", color='#ffffff', fontsize=12, fontweight='bold', pad=10)
         ax_price.grid(True, color='#1e293b', linestyle=':', alpha=0.6)
         ax_price.legend(loc='upper left', facecolor='#0b0f19', edgecolor='#334155', fontsize=8)
         ax_price.tick_params(colors='#94a3b8', labelsize=8)
 
         # 2. Panel RSI (14)
         ax_rsi.set_facecolor('#0f172a')
-        if 'rsi' in df.columns:
-            rsi = df['rsi']
+        if 'rsi_14' in df.columns:
+            rsi = df['rsi_14']
             ax_rsi.plot(times, rsi, color='#06b6d4', linewidth=1.5, label='RSI (14)')
             ax_rsi.axhline(70, color='#f43f5e', linestyle='--', linewidth=1.0, alpha=0.8)
             ax_rsi.axhline(30, color='#10b981', linestyle='--', linewidth=1.0, alpha=0.8)
@@ -190,7 +191,12 @@ def generate_chart_image(ticker: str, df: pd.DataFrame) -> Optional[io.BytesIO]:
             ax_macd.plot(times, signal, color='#f43f5e', linewidth=1.2, linestyle='--', label='Signal')
             # Colores de histograma
             colors = ['#10b981' if v >= 0 else '#ef4444' for v in hist]
-            ax_macd.bar(times, hist, color=colors, width=0.03, alpha=0.7)
+            # Ancho de barra proporcional a la temporalidad (en días, unidad de matplotlib)
+            try:
+                bar_width = (pd.Series(times).diff().median() / pd.Timedelta(days=1)) * 0.8
+            except Exception:
+                bar_width = 0.03
+            ax_macd.bar(times, hist, color=colors, width=bar_width, alpha=0.7)
             ax_macd.axhline(0, color='#64748b', linewidth=0.8, linestyle=':')
             cur_macd = macd.iloc[-1]
             ax_macd.set_ylabel(f'MACD ({cur_macd:+.2f})', color='#3b82f6', fontsize=9, fontweight='bold')
@@ -242,13 +248,19 @@ class TelegramTradingBot:
         self.gemini_agent = gemini_agent or GeminiQuantAgent()
         self.nlp_analyzer = NLPSentimentAnalyzer()
         self.watchlist_mgr = watchlist_mgr or WatchlistManager()
-        self.strategy = HybridQuantStrategy()
         self.risk_manager = RiskManager()
+        self.strategy = HybridQuantStrategy(risk_manager=self.risk_manager)
 
         self.app = None
         self.is_running = False
         self._thread = None
         self._loop = None
+
+    @staticmethod
+    def _sltp_label(risk: Dict[str, Any]) -> str:
+        """Describe cómo se calcularon el SL/TP (ML dinámico o ATR fijo)."""
+        method = "ML Dinámico" if risk.get("sltp_method") == "ML" else "ATR Fijo"
+        return f"{method} {risk.get('sl_atr_mult', '?')}x / {risk.get('tp_atr_mult', '?')}x ATR"
 
     def build_main_inline_keyboard(self):
         """Genera botones interactivos táctiles para Telegram."""
@@ -262,6 +274,10 @@ class TelegramTradingBot:
             [
                 InlineKeyboardButton("🔍 Escanear Todo", callback_data="btn_scan"),
                 InlineKeyboardButton("📈 Gráfica Técnica", callback_data="btn_chart")
+            ],
+            [
+                InlineKeyboardButton("🕒 Temporalidad", callback_data="btn_tf_menu"),
+                InlineKeyboardButton("🔁 Cambiar Activo", callback_data="btn_ticker_menu")
             ],
             [
                 InlineKeyboardButton("💰 Balance & PnL", callback_data="btn_balance"),
@@ -284,10 +300,87 @@ class TelegramTradingBot:
         keyboard = [
             [KeyboardButton("📊 Estado VM"), KeyboardButton("🔍 Escanear Todo")],
             [KeyboardButton("⚡ Señal en Vivo"), KeyboardButton("📈 Gráfica Activo")],
+            [KeyboardButton("🕒 Temporalidad"), KeyboardButton("🔁 Cambiar Activo")],
             [KeyboardButton("💰 Balance & PnL"), KeyboardButton("🎲 Monte Carlo")],
             [KeyboardButton("🤖 Preguntar a Gemini")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
+    def build_timeframe_keyboard(self):
+        """Botones para elegir la temporalidad de la gráfica (Telegram + Dashboard)."""
+        if not InlineKeyboardMarkup:
+            return None
+        current = chart_settings.get()["timeframe"]
+        buttons = [
+            InlineKeyboardButton(("✅ " if tf == current else "") + tf, callback_data=f"tf:{tf}")
+            for tf in TIMEFRAMES
+        ]
+        rows = [buttons[i:i + 4] for i in range(0, len(buttons), 4)]
+        return InlineKeyboardMarkup(rows)
+
+    def build_ticker_keyboard(self):
+        """Botones con los activos de la Watchlist para cambiar el activo de la gráfica."""
+        if not InlineKeyboardMarkup:
+            return None
+        current = chart_settings.get()["ticker"]
+        tickers = self.watchlist_mgr.get_tickers() or ["BTCUSDT", "ETHUSDT", "NVDA", "AAPL"]
+        buttons = [
+            InlineKeyboardButton(("✅ " if t == current else "") + t, callback_data=f"tk:{t}")
+            for t in tickers[:12]
+        ]
+        rows = [buttons[i:i + 3] for i in range(0, len(buttons), 3)]
+        return InlineKeyboardMarkup(rows)
+
+    def _chart_settings_text(self, header: str = "📈 *CONFIGURACIÓN DE GRÁFICA*") -> str:
+        cs = chart_settings.get()
+        return (
+            f"{header}\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"• *Activo:* `{cs['ticker']}`\n"
+            f"• *Temporalidad:* `{cs['timeframe']}` ({cs['timeframe_label']})\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "🖥️ _El Dashboard Web se actualiza automáticamente._\n"
+            "💡 `/tf 4h` · `/activo NVDA` · `/chart ETHUSDT 15m`"
+        )
+
+    async def _send_chart(self, bot, chat_id, ticker: Optional[str] = None, timeframe: Optional[str] = None):
+        """Renderiza y envía la gráfica técnica del activo/temporalidad indicados (o los actuales)."""
+        cs = chart_settings.get()
+        ticker = ticker or cs["ticker"]
+        timeframe = timeframe or cs["timeframe"]
+        status_msg = await bot.send_message(
+            chat_id=chat_id,
+            text=f"⏳ Generando gráfica técnica para *{ticker}* ({timeframe})...",
+            parse_mode="Markdown"
+        )
+        try:
+            await bot.send_chat_action(chat_id=chat_id, action="upload_photo")
+            df = await asyncio.to_thread(fetch_chart_data, ticker, timeframe)
+            df = compute_all_indicators(df)
+            buf = generate_chart_image(ticker, df, timeframe)
+            if not buf:
+                await status_msg.edit_text(f"⚠️ No se pudo generar la gráfica para {ticker} (asegúrate de tener instalado `matplotlib`: `pip install matplotlib`).")
+                return
+
+            cur_p = df['close'].iloc[-1]
+            rsi_val = df['rsi_14'].iloc[-1] if 'rsi_14' in df.columns else 50.0
+            macd_val = df['macd'].iloc[-1] if 'macd' in df.columns else 0.0
+            caption = (
+                f"📈 *ANÁLISIS TÉCNICO EN VIVO: {ticker}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"• *Precio Actual:* `${cur_p:,.2f}`\n"
+                f"• *RSI (14):* `{rsi_val:.1f}` ({'Sobrecompra' if rsi_val > 70 else 'Sobreventa' if rsi_val < 30 else 'Zona Neutral'})\n"
+                f"• *MACD:* `{macd_val:+.2f}`\n"
+                f"• *Temporalidad:* `{timeframe}` ({TIMEFRAMES[timeframe]['label']}) | *Fuente:* `yfinance`\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"☁️ *Generado en tiempo real en GCP Compute Engine*"
+            )
+            await bot.send_photo(chat_id=chat_id, photo=buf, caption=caption, parse_mode="Markdown",
+                                 reply_markup=self.build_timeframe_keyboard())
+            await status_msg.delete()
+        except Exception as e:
+            logger.error(f"[TelegramChart] Error: {e}")
+            await status_msg.edit_text(f"❌ Error al generar gráfica para {ticker}: {e}")
 
     def start_in_background(self):
         """Inicia el bot de Telegram en un hilo en segundo plano para no bloquear el servidor web."""
@@ -320,6 +413,8 @@ class TelegramTradingBot:
             self.app.add_handler(CommandHandler("scan", self.cmd_scan))
             self.app.add_handler(CommandHandler("chart", self.cmd_chart))
             self.app.add_handler(CommandHandler("grafica", self.cmd_chart))
+            self.app.add_handler(CommandHandler(["tf", "temporalidad", "timeframe"], self.cmd_timeframe))
+            self.app.add_handler(CommandHandler(["activo", "ticker", "accion"], self.cmd_chart_ticker))
             self.app.add_handler(CommandHandler("balance", self.cmd_balance))
             self.app.add_handler(CommandHandler("positions", self.cmd_positions))
             self.app.add_handler(CommandHandler("montecarlo", self.cmd_montecarlo))
@@ -543,7 +638,7 @@ class TelegramTradingBot:
             try:
                 df = fetch_historical_data(t, period="30d", interval="1h")
                 ml_pred = self.ml_engine.predict_latest(df, ticker=t)
-                strat_eval = self.strategy.evaluate_signals(df, ml_pred)
+                strat_eval = self.strategy.evaluate_signals(df, ml_pred, ticker=t)
                 sig = strat_eval["signal"]
                 t_score = strat_eval["tech_score"]
                 rf_sig = ml_pred["signal"]
@@ -567,9 +662,10 @@ class TelegramTradingBot:
             df = fetch_historical_data(ticker, period="60d", interval="1h")
             ml_pred = self.ml_engine.predict_latest(df, ticker=ticker)
             nlp_res = self.nlp_analyzer.analyze_ticker_sentiment(ticker)
-            strat_eval = self.strategy.evaluate_signals(df, ml_pred, nlp_data=nlp_res)
+            strat_eval = self.strategy.evaluate_signals(df, ml_pred, nlp_data=nlp_res, ticker=ticker)
             risk_eval = self.risk_manager.calculate_trade_parameters(
-                self.engine.balance, ml_pred['latest_close'], ml_pred['atr_14'], strat_eval['signal']
+                self.engine.balance, ml_pred['latest_close'], ml_pred['atr_14'], strat_eval['signal'],
+                ticker=ticker, df=df
             )
 
             # Síntesis Gemini
@@ -595,11 +691,13 @@ class TelegramTradingBot:
             if risk_eval.get("valid"):
                 msg += (
                     "━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"🛡️ *Risk Management (ATR 1.5 / 2.5):*\n"
+                    f"🛡️ *Risk Management ({self._sltp_label(risk_eval)}):*\n"
                     f"• Stop Loss: `${risk_eval['stop_loss']:,.2f}` (-{risk_eval['sl_distance_pct']}%)\n"
                     f"• Take Profit: `${risk_eval['take_profit']:,.2f}` (+{risk_eval['tp_distance_pct']}%)\n"
                     f"• R/B Ratio: `{risk_eval['risk_reward_ratio']}`\n"
                 )
+                if risk_eval.get("ml_low_edge"):
+                    msg += "⚠️ _ML: recorrido a favor esperado bajo; TP ajustado al R/B mínimo._\n"
 
             msg += f"\n🧠 *Análisis Agente Gemini Enterprise:*\n{gemini_notes}"
             return msg
@@ -608,46 +706,77 @@ class TelegramTradingBot:
             return f"❌ Error al procesar señal para {ticker}: {e}"
 
     async def cmd_chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Genera y envía una gráfica financiera técnica en modo oscuro a Telegram."""
-        ticker = context.args[0].upper() if context.args else None
-        if not ticker:
-            tickers = self.watchlist_mgr.get_tickers()
-            ticker = tickers[0] if tickers else "BTCUSDT"
-
-        status_msg = await update.message.reply_text(f"⏳ Generando gráfica técnica con indicadores para *{ticker}*...", parse_mode="Markdown")
-        await update.message.chat.send_action("upload_photo")
-
-        try:
-            df = fetch_historical_data(ticker, period="30d", interval="1h")
-            df = compute_all_indicators(df)
-            buf = generate_chart_image(ticker, df)
-
-            if buf:
-                cur_p = df['close'].iloc[-1]
-                rsi_val = df['rsi'].iloc[-1] if 'rsi' in df.columns else 50.0
-                macd_val = df['macd'].iloc[-1] if 'macd' in df.columns else 0.0
-                caption = (
-                    f"📈 *ANÁLISIS TÉCNICO EN VIVO: {ticker}*\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"• *Precio Actual:* `${cur_p:,.2f}`\n"
-                    f"• *RSI (14):* `{rsi_val:.1f}` ({'Sobrecompra' if rsi_val > 70 else 'Sobreventa' if rsi_val < 30 else 'Zona Neutral'})\n"
-                    f"• *MACD:* `{macd_val:+.2f}`\n"
-                    f"• *Temporalidad:* `Velas 1H` | *Fuente:* `yfinance / Gate.io`\n"
-                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                    f"☁️ *Generado en tiempo real en GCP Compute Engine*"
-                )
-                await context.bot.send_photo(
-                    chat_id=update.effective_chat.id,
-                    photo=buf,
-                    caption=caption,
-                    parse_mode="Markdown"
-                )
-                await status_msg.delete()
+        """
+        /chart [TICKER] [TEMPORALIDAD] -> envía la gráfica técnica y sincroniza el Dashboard.
+        Ej.: /chart, /chart NVDA, /chart 4h, /chart ETHUSDT 15m
+        """
+        self._register_chat_id(update)
+        ticker_arg, tf_arg = None, None
+        for arg in (context.args or [])[:2]:
+            if normalize_timeframe(arg):
+                tf_arg = arg
             else:
-                await status_msg.edit_text(f"⚠️ No se pudo generar la gráfica para {ticker} (asegúrate de tener instalado `matplotlib`: `pip install matplotlib`).")
-        except Exception as e:
-            logger.error(f"[TelegramChart] Error: {e}")
-            await status_msg.edit_text(f"❌ Error al generar gráfica para {ticker}: {e}")
+                ticker_arg = arg
+
+        if ticker_arg or tf_arg:
+            try:
+                chart_settings.update(ticker=ticker_arg, timeframe=tf_arg, source="telegram")
+            except ValueError as e:
+                await update.message.reply_text(f"❌ {e}")
+                return
+
+        await self._send_chart(context.bot, update.effective_chat.id)
+
+    async def cmd_timeframe(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/tf [1m|5m|15m|30m|1h|4h|1d|1w] -> cambia la temporalidad de la gráfica (Telegram + Dashboard)."""
+        self._register_chat_id(update)
+        if not context.args:
+            await update.message.reply_text(
+                self._chart_settings_text("🕒 *ELIGE LA TEMPORALIDAD*"),
+                parse_mode="Markdown",
+                reply_markup=self.build_timeframe_keyboard()
+            )
+            return
+        try:
+            chart_settings.update(timeframe=context.args[0], source="telegram")
+        except ValueError as e:
+            await update.message.reply_text(f"❌ {e}")
+            return
+        await update.message.reply_text(
+            self._chart_settings_text("✅ *TEMPORALIDAD ACTUALIZADA*"),
+            parse_mode="Markdown",
+            reply_markup=self._view_chart_keyboard()
+        )
+
+    async def cmd_chart_ticker(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/activo TICKER -> cambia el activo mostrado en la gráfica (Telegram + Dashboard)."""
+        self._register_chat_id(update)
+        if not context.args:
+            await update.message.reply_text(
+                self._chart_settings_text("🔁 *ELIGE EL ACTIVO DE LA GRÁFICA*"),
+                parse_mode="Markdown",
+                reply_markup=self.build_ticker_keyboard()
+            )
+            return
+        try:
+            chart_settings.update(ticker=context.args[0], source="telegram")
+        except ValueError as e:
+            await update.message.reply_text(f"❌ {e}")
+            return
+        await update.message.reply_text(
+            self._chart_settings_text("✅ *ACTIVO DE LA GRÁFICA ACTUALIZADO*"),
+            parse_mode="Markdown",
+            reply_markup=self._view_chart_keyboard()
+        )
+
+    def _view_chart_keyboard(self):
+        if not InlineKeyboardMarkup:
+            return None
+        return InlineKeyboardMarkup([[
+            InlineKeyboardButton("📈 Ver Gráfica", callback_data="btn_chart"),
+            InlineKeyboardButton("🕒 Temporalidad", callback_data="btn_tf_menu"),
+            InlineKeyboardButton("🔁 Activo", callback_data="btn_ticker_menu"),
+        ]])
 
     async def cmd_montecarlo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
@@ -663,7 +792,7 @@ class TelegramTradingBot:
             atr = float(df_ind['atr_14'].iloc[-1])
 
             risk_eval = self.risk_manager.calculate_trade_parameters(
-                self.engine.balance, current_price, atr, "BUY"
+                self.engine.balance, current_price, atr, "BUY", ticker=ticker, df=df
             )
             sl = risk_eval['stop_loss']
             tp = risk_eval['take_profit']
@@ -700,7 +829,9 @@ class TelegramTradingBot:
         df_ind = compute_all_indicators(df)
         atr = float(df_ind['atr_14'].iloc[-1])
 
-        risk = self.risk_manager.calculate_trade_parameters(self.engine.balance, price, atr, "BUY")
+        risk = self.risk_manager.calculate_trade_parameters(
+            self.engine.balance, price, atr, "BUY", ticker=ticker, df=df
+        )
         res = self.engine.open_position(
             ticker=ticker,
             side="BUY",
@@ -716,8 +847,8 @@ class TelegramTradingBot:
                 f"• Ticker: *{ticker}*\n"
                 f"• Entrada: `${price:,.2f}`\n"
                 f"• Lote: `{risk['position_size_units']}` unidades (${risk['position_value_usd']:,.2f})\n"
-                f"• Stop Loss: `${risk['stop_loss']:,.2f}`\n"
-                f"• Take Profit: `${risk['take_profit']:,.2f}`"
+                f"• Stop Loss: `${risk['stop_loss']:,.2f}` | Take Profit: `${risk['take_profit']:,.2f}`\n"
+                f"• Método SL/TP: `{self._sltp_label(risk)}`"
             )
         else:
             msg = f"❌ *No se pudo ejecutar la orden:* {res.get('message', 'Error desconocido')}"
@@ -731,7 +862,9 @@ class TelegramTradingBot:
         df_ind = compute_all_indicators(df)
         atr = float(df_ind['atr_14'].iloc[-1])
 
-        risk = self.risk_manager.calculate_trade_parameters(self.engine.balance, price, atr, "SELL")
+        risk = self.risk_manager.calculate_trade_parameters(
+            self.engine.balance, price, atr, "SELL", ticker=ticker, df=df
+        )
         res = self.engine.open_position(
             ticker=ticker,
             side="SELL",
@@ -747,8 +880,8 @@ class TelegramTradingBot:
                 f"• Ticker: *{ticker}*\n"
                 f"• Entrada: `${price:,.2f}`\n"
                 f"• Lote: `{risk['position_size_units']}` unidades\n"
-                f"• Stop Loss: `${risk['stop_loss']:,.2f}`\n"
-                f"• Take Profit: `${risk['take_profit']:,.2f}`"
+                f"• Stop Loss: `${risk['stop_loss']:,.2f}` | Take Profit: `${risk['take_profit']:,.2f}`\n"
+                f"• Método SL/TP: `{self._sltp_label(risk)}`"
             )
         else:
             msg = f"❌ *No se pudo ejecutar la orden:* {res.get('message', 'Error desconocido')}"
@@ -869,7 +1002,15 @@ class TelegramTradingBot:
             await self.cmd_signal(update, context)
             return
         elif text == "📈 Gráfica Activo":
-            await self.cmd_chart(update, context)
+            await self._send_chart(context.bot, update.effective_chat.id)
+            return
+        elif text == "🕒 Temporalidad":
+            context.args = []
+            await self.cmd_timeframe(update, context)
+            return
+        elif text == "🔁 Cambiar Activo":
+            context.args = []
+            await self.cmd_chart_ticker(update, context)
             return
         elif text == "💰 Balance & PnL":
             await self.cmd_balance(update, context)
@@ -1011,34 +1152,34 @@ INSTRUCCIONES DE RESPUESTA:
             await status_m.edit_text(msg, parse_mode="Markdown")
 
         elif action == "btn_chart":
-            tickers = self.watchlist_mgr.get_tickers()
-            t = tickers[0] if tickers else "BTCUSDT"
-            status_m = await query.message.reply_text(f"⏳ Renderizando gráfica técnica para *{t}*...", parse_mode="Markdown")
+            await self._send_chart(context.bot, query.message.chat_id)
+
+        elif action == "btn_tf_menu":
+            await query.message.reply_text(
+                self._chart_settings_text("🕒 *ELIGE LA TEMPORALIDAD*"),
+                parse_mode="Markdown",
+                reply_markup=self.build_timeframe_keyboard()
+            )
+
+        elif action == "btn_ticker_menu":
+            await query.message.reply_text(
+                self._chart_settings_text("🔁 *ELIGE EL ACTIVO DE LA GRÁFICA*"),
+                parse_mode="Markdown",
+                reply_markup=self.build_ticker_keyboard()
+            )
+
+        elif action.startswith("tf:") or action.startswith("tk:"):
+            kind, value = action.split(":", 1)
             try:
-                df = fetch_historical_data(t, period="30d", interval="1h")
-                df = compute_all_indicators(df)
-                buf = generate_chart_image(t, df)
-                if buf:
-                    cur_p = df['close'].iloc[-1]
-                    caption = (
-                        f"📈 *ANÁLISIS TÉCNICO EN VIVO: {t}*\n"
-                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                        f"• *Precio:* `${cur_p:,.2f}` | *Temporalidad:* `1H`\n"
-                        f"• *Indicadores:* `Precio + Regresión Lineal + SAR + RSI(14) + MACD`\n"
-                        f"☁️ *Generado en tiempo real en GCP Compute Engine*"
-                    )
-                    await context.bot.send_photo(
-                        chat_id=query.message.chat_id,
-                        photo=buf,
-                        caption=caption,
-                        parse_mode="Markdown"
-                    )
-                    await status_m.delete()
+                if kind == "tf":
+                    chart_settings.update(timeframe=value, source="telegram")
                 else:
-                    await status_m.edit_text(f"⚠️ No se pudo generar la gráfica (se requiere matplotlib en la VM).")
-            except Exception as e:
-                logger.error(f"Error generando gráfica en callback: {e}")
-                await status_m.edit_text(f"❌ Error al generar gráfica: {e}")
+                    chart_settings.update(ticker=value, source="telegram")
+            except ValueError as e:
+                await query.message.reply_text(f"❌ {e}")
+                return
+            # Re-enviar la gráfica ya con la nueva configuración
+            await self._send_chart(context.bot, query.message.chat_id)
 
         elif action == "btn_ask_help":
             await query.message.reply_text(

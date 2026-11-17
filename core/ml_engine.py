@@ -198,17 +198,21 @@ FEATURE_COLUMNS = [
 ]
 
 
+def build_feature_frame(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """Calcula indicadores + features relativas normalizadas (FEATURE_COLUMNS)."""
+    df = compute_all_indicators(df_raw).copy()
+    df['dist_ema_21'] = (df['close'] - df['ema_21']) / df['close']
+    df['dist_ema_50'] = (df['close'] - df['ema_50']) / df['close']
+    df['sar_diff'] = (df['close'] - df['parabolic_sar']) / df['close']
+    return df
+
+
 def prepare_features_and_target(df_raw: pd.DataFrame, forward_bars: int = 3, threshold: float = 0.003) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
     """
     Prepara features técnicas y targets para clasificación (1: BUY, 0: HOLD, -1: SELL)
     y para regresión (retorno futuro continuo).
     """
-    df = compute_all_indicators(df_raw).copy()
-
-    # Features relativas normalizadas
-    df['dist_ema_21'] = (df['close'] - df['ema_21']) / df['close']
-    df['dist_ema_50'] = (df['close'] - df['ema_50']) / df['close']
-    df['sar_diff'] = (df['close'] - df['parabolic_sar']) / df['close']
+    df = build_feature_frame(df_raw)
 
     # Target de retorno futuro a 'forward_bars' periodos
     future_return = (df['close'].shift(-forward_bars) - df['close']) / df['close']
@@ -558,10 +562,7 @@ class QuantitativeMLEngine:
 
         active_model = self.models_by_key.get(model_key, self.rf_model)
 
-        df = compute_all_indicators(df_raw)
-        df['dist_ema_21'] = (df['close'] - df['ema_21']) / df['close']
-        df['dist_ema_50'] = (df['close'] - df['ema_50']) / df['close']
-        df['sar_diff'] = (df['close'] - df['parabolic_sar']) / df['close']
+        df = build_feature_frame(df_raw)
 
         if not SKLEARN_AVAILABLE or active_model is None:
             # Predicción técnica analítica si scikit-learn no está disponible

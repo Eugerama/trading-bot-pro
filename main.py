@@ -54,8 +54,8 @@ def background_trading_loop(interval_seconds: int = 45):
     5. Envía alertas push en tiempo real a Telegram y guarda en trading_bot.log.
     """
     logger.info("Iniciando escáner y motor de trading autónomo 24/7 sobre Watchlist dinámica...")
-    strat = HybridQuantStrategy(rf_confidence_threshold=0.45)
     risk = RiskManager()
+    strat = HybridQuantStrategy(rf_confidence_threshold=0.45, risk_manager=risk)
 
     while True:
         try:
@@ -92,7 +92,7 @@ def background_trading_loop(interval_seconds: int = 45):
                         try:
                             df_rev = fetch_historical_data(ticker, period="30d", interval="1h")
                             ml_rev = ml_engine.predict_latest(df_rev, ticker=ticker)
-                            eval_rev = strat.evaluate_signals(df_rev, ml_rev)
+                            eval_rev = strat.evaluate_signals(df_rev, ml_rev, ticker=ticker)
                             rev_sig = eval_rev["signal"]
                             if (pos["side"] == "BUY" and rev_sig == "SELL") or (pos["side"] == "SELL" and rev_sig == "BUY"):
                                 closed_rev = execution_engine.close_position(ticker, current_price, "REVERSION_TENDENCIA_PROFIT")
@@ -126,7 +126,7 @@ def background_trading_loop(interval_seconds: int = 45):
                     try:
                         df = fetch_historical_data(ticker, period="30d", interval="1h")
                         ml_pred = ml_engine.predict_latest(df, ticker=ticker)
-                        strat_eval = strat.evaluate_signals(df, ml_pred)
+                        strat_eval = strat.evaluate_signals(df, ml_pred, ticker=ticker)
                         signal = strat_eval["signal"]
 
                         # Si hay señal decisiva (BUY o SELL) con alta probabilidad en el modelo
@@ -136,7 +136,8 @@ def background_trading_loop(interval_seconds: int = 45):
                                 current_price=current_price,
                                 atr=ml_pred["atr_14"],
                                 signal=signal,
-                                ticker=ticker
+                                ticker=ticker,
+                                df=df
                             )
 
                             if trade_risk.get("valid"):
@@ -158,8 +159,8 @@ def background_trading_loop(interval_seconds: int = 45):
                                         f"• Señal: `{'🟢 BUY' if signal == 'BUY' else '🔴 SELL'}` (Random Forest: {ml_pred['confidence']*100:.1f}%)\n"
                                         f"• Entrada: `${current_price:,.2f}`\n"
                                         f"• Tamaño: `{trade_risk['position_size_units']}` unidades (${trade_risk['position_value_usd']:,.2f})\n"
-                                        f"• Stop Loss (ATR): `${trade_risk['stop_loss']:,.2f}` (-{trade_risk['sl_distance_pct']}%)\n"
-                                        f"• Take Profit (ATR): `${trade_risk['take_profit']:,.2f}` (+{trade_risk['tp_distance_pct']}%)\n"
+                                        f"• Stop Loss ({trade_risk['sltp_method']} {trade_risk['sl_atr_mult']}x ATR): `${trade_risk['stop_loss']:,.2f}` (-{trade_risk['sl_distance_pct']}%)\n"
+                                        f"• Take Profit ({trade_risk['sltp_method']} {trade_risk['tp_atr_mult']}x ATR): `${trade_risk['take_profit']:,.2f}` (+{trade_risk['tp_distance_pct']}%)\n"
                                         f"• R/B Ratio: `{trade_risk['risk_reward_ratio']}`\n"
                                         f"• Motivo: _{strat_eval['reason']}_\n"
                                         f"━━━━━━━━━━━━━━━━━━━━━━\n"
