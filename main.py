@@ -19,28 +19,31 @@ import uvicorn
 load_dotenv()
 
 # Configurar logging (ocultando logs de httpx para no exponer el token de Telegram)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler("trading_bot.log"),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler("trading_bot.log"),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("MainOrchestrator")
 
 from core.data_feed import fetch_historical_data, get_current_price
-from core.indicators import compute_all_indicators
-from core.ml_engine import QuantitativeMLEngine
-from core.strategy import HybridQuantStrategy
-from core.risk_manager import RiskManager
-from core.execution_engine import ExecutionEngine
-from core.gemini_agent import GeminiQuantAgent
-from core.watchlist_manager import WatchlistManager
-from telegram_bot.bot import TelegramTradingBot
-from web.server import app, execution_engine, ml_engine, telegram_bot, watchlist_mgr
+from web.server import (
+    app,
+    execution_engine,
+    ml_engine,
+    telegram_bot,
+    watchlist_mgr,
+    risk_manager,
+    strategy,
+    USER_SETTINGS,
+    DEFAULT_SETTINGS,
+)
 
 
 def background_trading_loop(interval_seconds: int = 45):
@@ -54,12 +57,12 @@ def background_trading_loop(interval_seconds: int = 45):
     5. Envía alertas push en tiempo real a Telegram y guarda en trading_bot.log.
     """
     logger.info("Iniciando escáner y motor de trading autónomo 24/7 sobre Watchlist dinámica...")
-    risk = RiskManager()
-    strat = HybridQuantStrategy(rf_confidence_threshold=0.45, risk_manager=risk)
+    strategy.rf_confidence_threshold = min(strategy.rf_confidence_threshold, 0.45)
 
     while True:
         try:
             auto_trade_enabled = os.getenv("AUTO_TRADING_ENABLED", "true").lower() == "true"
+            active_cfg = USER_SETTINGS.get("admin", DEFAULT_SETTINGS)
             # Cargar los tickers dinámicos de la Watchlist del usuario
             tracked_tickers = watchlist_mgr.get_tickers()
 
@@ -92,7 +95,7 @@ def background_trading_loop(interval_seconds: int = 45):
                         try:
                             df_rev = fetch_historical_data(ticker, period="30d", interval="1h")
                             ml_rev = ml_engine.predict_latest(df_rev, ticker=ticker)
-                            eval_rev = strat.evaluate_signals(df_rev, ml_rev, ticker=ticker)
+                            eval_rev = strategy.evaluate_signals(df_rev, ml_rev, enabled_metrics=active_cfg, ticker=ticker)
                             rev_sig = eval_rev["signal"]
                             if (pos["side"] == "BUY" and rev_sig == "SELL") or (pos["side"] == "SELL" and rev_sig == "BUY"):
                                 closed_rev = execution_engine.close_position(ticker, current_price, "REVERSION_TENDENCIA_PROFIT")
@@ -126,12 +129,12 @@ def background_trading_loop(interval_seconds: int = 45):
                     try:
                         df = fetch_historical_data(ticker, period="30d", interval="1h")
                         ml_pred = ml_engine.predict_latest(df, ticker=ticker)
-                        strat_eval = strat.evaluate_signals(df, ml_pred, ticker=ticker)
+                        strat_eval = strategy.evaluate_signals(df, ml_pred, enabled_metrics=active_cfg, ticker=ticker)
                         signal = strat_eval["signal"]
 
                         # Si hay señal decisiva (BUY o SELL) con alta probabilidad en el modelo
                         if signal in ["BUY", "SELL"]:
-                            trade_risk = risk.calculate_trade_parameters(
+                            trade_risk = risk_manager.calculate_trade_parameters(
                                 balance=execution_engine.balance,
                                 current_price=current_price,
                                 atr=ml_pred["atr_14"],

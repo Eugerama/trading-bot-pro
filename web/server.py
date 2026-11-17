@@ -303,7 +303,13 @@ async def api_save_user_settings(request: Request, user: str = Depends(get_curre
     if "auto_trade_enabled" in cfg:
         os.environ["AUTO_TRADING_ENABLED"] = "true" if cfg["auto_trade_enabled"] else "false"
 
+    _MARKET_ANALYSIS_CACHE.clear()
     return {"success": True, "message": "Configuración de métricas actualizada correctamente.", "settings": cfg}
+
+
+# Caché de corto plazo (20s) para evitar recalcular 800 caminos de Monte Carlo en cada polling de 15s
+_MARKET_ANALYSIS_CACHE: Dict[str, Dict[str, Any]] = {}
+_MARKET_ANALYSIS_TTL = 20.0
 
 
 @app.get("/api/nlp-sentiment")
@@ -317,6 +323,13 @@ async def api_nlp_sentiment(ticker: str = "BTCUSDT", user: str = Depends(get_cur
 async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_current_user)):
     """Ejecuta análisis técnico + Random Forest + NLP Sentiment + Gemini para el ticker seleccionado."""
     clean_ticker = ticker.upper().strip()
+    cache_key = f"{user}:{clean_ticker}"
+    now_ts = time.time()
+
+    cached = _MARKET_ANALYSIS_CACHE.get(cache_key)
+    if cached and (now_ts - cached["ts"]) < _MARKET_ANALYSIS_TTL:
+        return cached["payload"]
+
     df = fetch_historical_data(clean_ticker, period="60d", interval="1h")
 
     # 1. Configuración de métricas activas del usuario
@@ -325,8 +338,8 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
     # 2. Análisis NLP de Noticias (Gemini Enterprise)
     nlp_res = nlp_analyzer.analyze_ticker_sentiment(clean_ticker)
 
-    # 3. Predicción ML (Random Forest)
-    ml_pred = ml_engine.predict_latest(df)
+    # 3. Predicción ML (Random Forest específico del activo)
+    ml_pred = ml_engine.predict_latest(df, ticker=clean_ticker)
 
     # 4. Evaluación de Estrategia considerando sólo las métricas activadas por el usuario
     strat_eval = strategy.evaluate_signals(
@@ -373,7 +386,7 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
         clean_ticker, strat_eval['metrics'], ml_pred, risk_eval, mc_eval, nlp_res
     )
 
-    return {
+    payload = {
         "ticker": clean_ticker,
         "current_price": current_price,
         "strategy": strat_eval,
@@ -385,6 +398,8 @@ async def api_market_analysis(ticker: str = "BTCUSDT", user: str = Depends(get_c
         "user_settings": user_cfg,
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     }
+    _MARKET_ANALYSIS_CACHE[cache_key] = {"ts": now_ts, "payload": payload}
+    return payload
 
 
 @app.get("/api/monte-carlo")
@@ -441,16 +456,18 @@ async def api_monte_carlo(
 
 @app.get("/api/ml-validation")
 async def api_ml_validation(ticker: str = "BTCUSDT", user: str = Depends(get_current_user)):
-    """Retorna la tabla de hiperparámetros, métricas de error y Test Diebold-Mariano."""
+    """Retorna la tabla de hiperparámetros, métricas de error y Test Diebold-Mariano específicas del ticker."""
     clean_ticker = ticker.upper().strip()
-    if not ml_engine.last_metrics:
+    if clean_ticker not in ml_engine.metrics_by_key:
         df = fetch_historical_data(clean_ticker, period="60d", interval="1h")
-        ml_engine.train_and_evaluate(df)
+        ml_engine.train_and_evaluate(df, model_key=clean_ticker)
 
+    tk_metrics = ml_engine.metrics_by_key.get(clean_ticker, ml_engine.last_metrics)
     return {
-        "metrics": ml_engine.last_metrics,
-        "simulation_table": ml_engine.simulation_table,
-        "diebold_mariano": ml_engine.dm_test_result
+        "ticker": clean_ticker,
+        "metrics": tk_metrics,
+        "simulation_table": tk_metrics.get("simulation_table", ml_engine.simulation_table),
+        "diebold_mariano": tk_metrics.get("diebold_mariano", ml_engine.dm_test_result)
     }
 
 

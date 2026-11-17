@@ -84,14 +84,15 @@ from core.chart_settings import chart_settings, TIMEFRAMES, fetch_chart_data, no
 
 # Configuración del Logger dedicado (ocultando httpx para no exponer el token en el log)
 LOG_FILE = "trading_bot.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stdout)
-    ]
-)
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=[
+            logging.FileHandler(LOG_FILE),
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("TelegramChatOps")
@@ -269,10 +270,10 @@ class TelegramTradingBot:
         keyboard = [
             [
                 InlineKeyboardButton("📊 Estado VM", callback_data="btn_status"),
-                InlineKeyboardButton("⚡ Señal en Vivo", callback_data="btn_signal")
+                InlineKeyboardButton("🔍 Escanear Todo", callback_data="btn_scan")
             ],
             [
-                InlineKeyboardButton("🔍 Escanear Todo", callback_data="btn_scan"),
+                InlineKeyboardButton("⚡ Señal en Vivo", callback_data="btn_signal"),
                 InlineKeyboardButton("📈 Gráfica Técnica", callback_data="btn_chart")
             ],
             [
@@ -281,11 +282,20 @@ class TelegramTradingBot:
             ],
             [
                 InlineKeyboardButton("💰 Balance & PnL", callback_data="btn_balance"),
-                InlineKeyboardButton("📋 Watchlist", callback_data="btn_watchlist")
+                InlineKeyboardButton("📂 Posiciones Abiertas", callback_data="btn_positions")
             ],
             [
                 InlineKeyboardButton("🎲 Monte Carlo", callback_data="btn_montecarlo"),
                 InlineKeyboardButton("⚙️ Métricas & Sharpe", callback_data="btn_metrics")
+            ],
+            [
+                InlineKeyboardButton("📋 Watchlist", callback_data="btn_watchlist"),
+                InlineKeyboardButton("🤖 Auto-Trade ON/OFF", callback_data="btn_autotrade")
+            ],
+            [
+                InlineKeyboardButton("🟢 Comprar", callback_data="btn_buy"),
+                InlineKeyboardButton("🔴 Vender", callback_data="btn_sell"),
+                InlineKeyboardButton("❌ Cerrar", callback_data="btn_close")
             ],
             [
                 InlineKeyboardButton("🤖 Preguntar a Gemini AI", callback_data="btn_ask_help")
@@ -294,14 +304,17 @@ class TelegramTradingBot:
         return InlineKeyboardMarkup(keyboard)
 
     def build_persistent_reply_keyboard(self):
-        """Genera el teclado persistente en la parte inferior de la pantalla del usuario."""
+        """Genera el teclado persistente completo en la parte inferior de la pantalla del usuario."""
         if not ReplyKeyboardMarkup:
             return None
         keyboard = [
             [KeyboardButton("📊 Estado VM"), KeyboardButton("🔍 Escanear Todo")],
             [KeyboardButton("⚡ Señal en Vivo"), KeyboardButton("📈 Gráfica Activo")],
             [KeyboardButton("🕒 Temporalidad"), KeyboardButton("🔁 Cambiar Activo")],
-            [KeyboardButton("💰 Balance & PnL"), KeyboardButton("🎲 Monte Carlo")],
+            [KeyboardButton("💰 Balance & PnL"), KeyboardButton("📂 Posiciones Abiertas")],
+            [KeyboardButton("🎲 Monte Carlo"), KeyboardButton("⚙️ Métricas & Sharpe")],
+            [KeyboardButton("📋 Watchlist"), KeyboardButton("🤖 Auto-Trade ON/OFF")],
+            [KeyboardButton("🟢 Comprar Activo"), KeyboardButton("🔴 Vender Activo"), KeyboardButton("❌ Cerrar Posición")],
             [KeyboardButton("🤖 Preguntar a Gemini")]
         ]
         return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
@@ -573,25 +586,25 @@ class TelegramTradingBot:
             "━━━━━━━━━━━━━━━━━━━━━━"
         )
 
-    async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+    def _build_positions_text(self) -> str:
         positions = self.engine.active_positions
         if not positions:
-            await update.message.reply_text("ℹ️ *No hay posiciones activas actualmente.*", parse_mode="Markdown")
-            return
+            return "ℹ️ *No hay posiciones activas actualmente en el portafolio.*"
 
         msg = "📊 *POSICIONES ACTIVAS EN MERCADO*\n━━━━━━━━━━━━━━━━━━━━━━\n"
         for ticker, pos in positions.items():
             pnl_emoji = "🟢" if pos['pnl'] >= 0 else "🔴"
             msg += (
                 f"{pnl_emoji} *{ticker}* | Lado: `{pos['side']}`\n"
-                f"  • Entrada: `${pos['entry_price']:,.2f}`\n"
-                f"  • Precio Actual: `${pos['current_price']:,.2f}`\n"
-                f"  • Tamaño: `{pos['size']}` unidades\n"
-                f"  • Stop Loss: `${pos['stop_loss']:,.2f}`\n"
-                f"  • Take Profit: `${pos['take_profit']:,.2f}`\n"
-                f"  • PnL Flotante: `${pos['pnl']:+,.2f} ({pos['roi_pct']:+.2f}%)`\n\n"
+                f"  • Entrada: `${pos['entry_price']:,.2f}` | Actual: `${pos['current_price']:,.2f}`\n"
+                f"  • Tamaño: `{pos['size']}` u. | PnL: `${pos['pnl']:+,.2f} ({pos['roi_pct']:+.2f}%)`\n"
+                f"  • SL: `${pos['stop_loss']:,.2f}` | TP: `${pos['take_profit']:,.2f}`\n\n"
             )
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        return msg
+
+    async def cmd_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        msg = self._build_positions_text()
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
 
     async def cmd_metrics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = self._build_metrics_text()
@@ -612,7 +625,7 @@ class TelegramTradingBot:
         )
 
     async def cmd_signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
+        ticker = context.args[0].upper() if context.args else chart_settings.get()["ticker"]
         status_msg = await update.message.reply_text(f"⏳ Analizando mercado, ML y NLP para *{ticker}*...", parse_mode="Markdown")
         msg = await self._generate_signal_message(ticker)
         try:
@@ -779,7 +792,7 @@ class TelegramTradingBot:
         ]])
 
     async def cmd_montecarlo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
+        ticker = context.args[0].upper() if context.args else chart_settings.get()["ticker"]
         status_msg = await update.message.reply_text(f"🎲 Computando 1,000 trayectorias Monte Carlo para *{ticker}*...", parse_mode="Markdown")
         msg = await self._generate_montecarlo_message(ticker)
         await status_msg.edit_text(msg, parse_mode="Markdown")
@@ -791,19 +804,26 @@ class TelegramTradingBot:
             df_ind = compute_all_indicators(df)
             atr = float(df_ind['atr_14'].iloc[-1])
 
-            risk_eval = self.risk_manager.calculate_trade_parameters(
-                self.engine.balance, current_price, atr, "BUY", ticker=ticker, df=df
-            )
-            sl = risk_eval['stop_loss']
-            tp = risk_eval['take_profit']
+            active_pos = self.engine.active_positions.get(ticker)
+            if active_pos:
+                pos_side = active_pos.get("side", "BUY")
+                sl = float(active_pos.get("stop_loss", current_price * 0.97))
+                tp = float(active_pos.get("take_profit", current_price * 1.05))
+            else:
+                pos_side = "BUY"
+                risk_eval = self.risk_manager.calculate_trade_parameters(
+                    self.engine.balance, current_price, atr, pos_side, ticker=ticker, df=df
+                )
+                sl = risk_eval['stop_loss']
+                tp = risk_eval['take_profit']
 
             mc_res = run_monte_carlo_simulation(
-                df, current_price, sl, tp, position_type="BUY", num_simulations=1000, time_horizon_bars=48
+                df, current_price, sl, tp, position_type=pos_side, num_simulations=1000, time_horizon_bars=48
             )
 
             return (
                 f"🎲 *SIMULACIÓN MONTE CARLO (1,000 CAMINOS)*\n"
-                f"Activo: *{ticker}* | Horizonte: `48 velas`\n"
+                f"Activo: *{ticker}* (`{pos_side}`) | Horizonte: `48 velas`\n"
                 "━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"• *Precio Entrada:* `${current_price:,.2f}`\n"
                 f"• *Take Profit Objetivo:* `${tp:,.2f}`\n"
@@ -822,19 +842,18 @@ class TelegramTradingBot:
             logger.error(f"Error procesando Monte Carlo: {e}")
             return f"❌ Error al ejecutar simulación Monte Carlo para {ticker}: {e}"
 
-    async def cmd_buy(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
+    def _execute_manual_order_text(self, side: str, ticker: str) -> str:
         price = get_current_price(ticker)
         df = fetch_historical_data(ticker, period="30d", interval="1h")
         df_ind = compute_all_indicators(df)
         atr = float(df_ind['atr_14'].iloc[-1])
 
         risk = self.risk_manager.calculate_trade_parameters(
-            self.engine.balance, price, atr, "BUY", ticker=ticker, df=df
+            self.engine.balance, price, atr, side, ticker=ticker, df=df
         )
         res = self.engine.open_position(
             ticker=ticker,
-            side="BUY",
+            side=side,
             entry_price=price,
             size=risk["position_size_units"],
             stop_loss=risk["stop_loss"],
@@ -842,84 +861,65 @@ class TelegramTradingBot:
         )
 
         if res["success"]:
-            msg = (
-                f"🟢 *ORDEN DE COMPRA EJECUTADA EN VM*\n"
+            icon = "🟢 *ORDEN DE COMPRA EJECUTADA EN VM*" if side == "BUY" else "🔴 *ORDEN DE VENTA EJECUTADA EN VM*"
+            return (
+                f"{icon}\n"
                 f"• Ticker: *{ticker}*\n"
                 f"• Entrada: `${price:,.2f}`\n"
                 f"• Lote: `{risk['position_size_units']}` unidades (${risk['position_value_usd']:,.2f})\n"
                 f"• Stop Loss: `${risk['stop_loss']:,.2f}` | Take Profit: `${risk['take_profit']:,.2f}`\n"
                 f"• Método SL/TP: `{self._sltp_label(risk)}`"
             )
-        else:
-            msg = f"❌ *No se pudo ejecutar la orden:* {res.get('message', 'Error desconocido')}"
+        return f"❌ *No se pudo ejecutar la orden:* {res.get('message', 'Error desconocido')}"
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    async def cmd_sell(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
-        price = get_current_price(ticker)
-        df = fetch_historical_data(ticker, period="30d", interval="1h")
-        df_ind = compute_all_indicators(df)
-        atr = float(df_ind['atr_14'].iloc[-1])
-
-        risk = self.risk_manager.calculate_trade_parameters(
-            self.engine.balance, price, atr, "SELL", ticker=ticker, df=df
-        )
-        res = self.engine.open_position(
-            ticker=ticker,
-            side="SELL",
-            entry_price=price,
-            size=risk["position_size_units"],
-            stop_loss=risk["stop_loss"],
-            take_profit=risk["take_profit"]
-        )
-
-        if res["success"]:
-            msg = (
-                f"🔴 *ORDEN DE VENTA EJECUTADA EN VM*\n"
-                f"• Ticker: *{ticker}*\n"
-                f"• Entrada: `${price:,.2f}`\n"
-                f"• Lote: `{risk['position_size_units']}` unidades\n"
-                f"• Stop Loss: `${risk['stop_loss']:,.2f}` | Take Profit: `${risk['take_profit']:,.2f}`\n"
-                f"• Método SL/TP: `{self._sltp_label(risk)}`"
-            )
-        else:
-            msg = f"❌ *No se pudo ejecutar la orden:* {res.get('message', 'Error desconocido')}"
-
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    async def cmd_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        ticker = context.args[0].upper() if context.args else os.getenv("DEFAULT_TICKER", "BTCUSDT")
+    def _close_manual_order_text(self, ticker: str) -> str:
         price = get_current_price(ticker)
         closed = self.engine.close_position(ticker, price, "MANUAL_TELEGRAM")
-
         if closed:
-            msg = (
+            return (
                 f"🚪 *POSICIÓN CERRADA MANUALMENTE DESDE TELEGRAM*\n"
                 f"• Ticker: *{ticker}*\n"
                 f"• Salida: `${price:,.2f}`\n"
                 f"• PnL Realizado: `${closed['pnl']:+,.2f} ({closed['roi_pct']:+.2f}%)`"
             )
-        else:
-            msg = f"ℹ️ *No existe posición activa para {ticker} que cerrar.*"
+        return f"ℹ️ *No existe posición activa para {ticker} que cerrar.*"
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
-
-    async def cmd_autotrade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        arg = context.args[0].lower() if context.args else None
+    def _toggle_autotrade_text(self, arg: Optional[str] = None) -> str:
         current_state = os.getenv("AUTO_TRADING_ENABLED", "true").lower() == "true"
-
         if arg in ["on", "activar", "true", "start"]:
-            os.environ["AUTO_TRADING_ENABLED"] = "true"
-            msg = "🟢 *AUTO-TRADING ACTIVADO*\nEl escáner autónomo 24/7 en la VM analizará y abrirá trades automáticamente sobre tu Watchlist cuando detecte confluencia estadística."
+            new_state = True
         elif arg in ["off", "desactivar", "false", "stop"]:
-            os.environ["AUTO_TRADING_ENABLED"] = "false"
-            msg = "🔴 *AUTO-TRADING PAUSADO*\nEl bot continuará gestionando el riesgo (SL/TP) de las posiciones abiertas, pero no abrirá nuevos trades de forma autónoma."
+            new_state = False
+        elif arg == "toggle":
+            new_state = not current_state
         else:
             state_str = "🟢 ACTIVO" if current_state else "🔴 PAUSADO"
-            msg = f"⚙️ *ESTADO DEL AUTO-TRADING:* `{state_str}`\n\nUso: `/autotrade on` para activar o `/autotrade off` para pausar."
+            return f"⚙️ *ESTADO DEL AUTO-TRADING:* `{state_str}`\n\nUsa el botón `🤖 Auto-Trade ON/OFF` o escribe `/autotrade on` | `/autotrade off`."
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
+        os.environ["AUTO_TRADING_ENABLED"] = "true" if new_state else "false"
+        if new_state:
+            return "🟢 *AUTO-TRADING ACTIVADO (ON)*\nEl escáner autónomo 24/7 en la VM analizará y abrirá trades automáticamente sobre tu Watchlist."
+        return "🔴 *AUTO-TRADING PAUSADO (OFF)*\nEl bot seguirá cuidando el SL/TP de tus posiciones abiertas, pero no abrirá nuevos trades solos."
+
+    async def cmd_buy(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        ticker = context.args[0].upper() if context.args else chart_settings.get()["ticker"]
+        msg = await asyncio.to_thread(self._execute_manual_order_text, "BUY", ticker)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
+
+    async def cmd_sell(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        ticker = context.args[0].upper() if context.args else chart_settings.get()["ticker"]
+        msg = await asyncio.to_thread(self._execute_manual_order_text, "SELL", ticker)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
+
+    async def cmd_close(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        ticker = context.args[0].upper() if context.args else chart_settings.get()["ticker"]
+        msg = await asyncio.to_thread(self._close_manual_order_text, ticker)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
+
+    async def cmd_autotrade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        arg = context.args[0].lower() if context.args else "toggle"
+        msg = self._toggle_autotrade_text(arg)
+        await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
 
     async def cmd_watchlist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = self._build_watchlist_text()
@@ -991,7 +991,7 @@ class TelegramTradingBot:
         self._register_chat_id(update)
         text = update.message.text.strip()
 
-        # 1. Mapeo de botones táctiles inferiores
+        # 1. Mapeo completo de los botones táctiles inferiores (ReplyKeyboardMarkup)
         if text == "📊 Estado VM":
             await self.cmd_status(update, context)
             return
@@ -999,6 +999,7 @@ class TelegramTradingBot:
             await self.cmd_scan(update, context)
             return
         elif text == "⚡ Señal en Vivo":
+            context.args = []
             await self.cmd_signal(update, context)
             return
         elif text == "📈 Gráfica Activo":
@@ -1015,14 +1016,41 @@ class TelegramTradingBot:
         elif text == "💰 Balance & PnL":
             await self.cmd_balance(update, context)
             return
+        elif text == "📂 Posiciones Abiertas":
+            await self.cmd_positions(update, context)
+            return
         elif text == "🎲 Monte Carlo":
+            context.args = []
             await self.cmd_montecarlo(update, context)
+            return
+        elif text == "⚙️ Métricas & Sharpe":
+            await self.cmd_metrics(update, context)
+            return
+        elif text == "📋 Watchlist":
+            await self.cmd_watchlist(update, context)
+            return
+        elif text == "🤖 Auto-Trade ON/OFF":
+            context.args = ["toggle"]
+            await self.cmd_autotrade(update, context)
+            return
+        elif text == "🟢 Comprar Activo":
+            context.args = []
+            await self.cmd_buy(update, context)
+            return
+        elif text == "🔴 Vender Activo":
+            context.args = []
+            await self.cmd_sell(update, context)
+            return
+        elif text == "❌ Cerrar Posición":
+            context.args = []
+            await self.cmd_close(update, context)
             return
         elif text == "🤖 Preguntar a Gemini":
             await update.message.reply_text(
                 "🧠 *ASISTENTE CUANTITATIVO GEMINI ENTERPRISE*\n\n"
                 "Escribe directamente tu duda aquí (sobre el mercado, los modelos matemáticos, el test Diebold-Mariano o la estrategia) y Gemini te responderá en segundos.",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=self.build_persistent_reply_keyboard()
             )
             return
 
@@ -1033,8 +1061,8 @@ class TelegramTradingBot:
         """Consulta la API de Google Gemini Enterprise en segundo plano sin bloquear el loop de Telegram."""
         await update.message.chat.send_action("typing")
 
+        active_ticker = chart_settings.get()["ticker"]
         tickers = self.watchlist_mgr.get_tickers()
-        active_ticker = tickers[0] if tickers else "BTCUSDT"
 
         # Obtener precio en memoria instantáneamente sin bloquear en descargas de yfinance
         cur_price = 0.0
@@ -1075,9 +1103,9 @@ INSTRUCCIONES DE RESPUESTA:
             if ai_text:
                 reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
                 try:
-                    await update.message.reply_text(reply, parse_mode="Markdown")
+                    await update.message.reply_text(reply, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
                 except Exception:
-                    await update.message.reply_text(reply.replace("**", "").replace("*", "• "))
+                    await update.message.reply_text(reply.replace("**", "").replace("*", "• "), reply_markup=self.build_persistent_reply_keyboard())
                 return
 
             # Si la API no respondió texto pero tampoco arrojó error fatal
@@ -1087,7 +1115,7 @@ INSTRUCCIONES DE RESPUESTA:
                 "mientras que la administración de riesgo ATR protege el capital ante picos de volatilidad."
             )
             reply = f"🧠 *GEMINI ENTERPRISE AI:*\n\n{ai_text}"
-            await update.message.reply_text(reply, parse_mode="Markdown")
+            await update.message.reply_text(reply, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
         except Exception as e:
             logger.error(f"[TelegramGemini] Error al consultar Gemini: {e}")
             fallback = (
@@ -1097,7 +1125,7 @@ INSTRUCCIONES DE RESPUESTA:
                 f"Las decisiones se ejecutan únicamente cuando coinciden la señal del clasificador Random Forest (certeza > 55%), "
                 f"la pendiente de la regresión lineal y una relación Beneficio/Riesgo calculada por ATR superior a 1.67x."
             )
-            await update.message.reply_text(fallback, parse_mode="Markdown")
+            await update.message.reply_text(fallback, parse_mode="Markdown", reply_markup=self.build_persistent_reply_keyboard())
 
     # ==========================================================================
     # MANEJADOR DE EVENTOS DE BOTONES INLINE (CALLBACK QUERY)
@@ -1119,6 +1147,11 @@ INSTRUCCIONES DE RESPUESTA:
             inline_kb = self.build_main_inline_keyboard()
             await query.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
 
+        elif action == "btn_positions":
+            text = self._build_positions_text()
+            inline_kb = self.build_main_inline_keyboard()
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
+
         elif action == "btn_metrics":
             text = self._build_metrics_text()
             inline_kb = self.build_main_inline_keyboard()
@@ -1129,14 +1162,36 @@ INSTRUCCIONES DE RESPUESTA:
             inline_kb = self.build_main_inline_keyboard()
             await query.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
 
+        elif action == "btn_autotrade":
+            text = self._toggle_autotrade_text("toggle")
+            inline_kb = self.build_main_inline_keyboard()
+            await query.message.reply_text(text, parse_mode="Markdown", reply_markup=inline_kb)
+
+        elif action == "btn_buy":
+            t = chart_settings.get()["ticker"]
+            status_m = await query.message.reply_text(f"🟢 Ejecutando compra (`BUY`) para *{t}*...", parse_mode="Markdown")
+            msg = await asyncio.to_thread(self._execute_manual_order_text, "BUY", t)
+            await status_m.edit_text(msg, parse_mode="Markdown")
+
+        elif action == "btn_sell":
+            t = chart_settings.get()["ticker"]
+            status_m = await query.message.reply_text(f"🔴 Ejecutando venta (`SELL`) para *{t}*...", parse_mode="Markdown")
+            msg = await asyncio.to_thread(self._execute_manual_order_text, "SELL", t)
+            await status_m.edit_text(msg, parse_mode="Markdown")
+
+        elif action == "btn_close":
+            t = chart_settings.get()["ticker"]
+            msg = await asyncio.to_thread(self._close_manual_order_text, t)
+            inline_kb = self.build_main_inline_keyboard()
+            await query.message.reply_text(msg, parse_mode="Markdown", reply_markup=inline_kb)
+
         elif action == "btn_scan":
             status_m = await query.message.reply_text("🔍 *Escaneando todos los activos de la Watchlist...*", parse_mode="Markdown")
             msg = await asyncio.to_thread(self._generate_scan_message)
             await status_m.edit_text(msg, parse_mode="Markdown")
 
         elif action == "btn_signal":
-            tickers = self.watchlist_mgr.get_tickers()
-            t = tickers[0] if tickers else "BTCUSDT"
+            t = chart_settings.get()["ticker"]
             status_m = await query.message.reply_text(f"⏳ Evaluando señal cuantitativa para *{t}*...", parse_mode="Markdown")
             msg = await self._generate_signal_message(t)
             try:
@@ -1145,8 +1200,7 @@ INSTRUCCIONES DE RESPUESTA:
                 await status_m.edit_text(msg.replace("**", "").replace("*", ""))
 
         elif action == "btn_montecarlo":
-            tickers = self.watchlist_mgr.get_tickers()
-            t = tickers[0] if tickers else "BTCUSDT"
+            t = chart_settings.get()["ticker"]
             status_m = await query.message.reply_text(f"🎲 Simulando 1,000 caminos Monte Carlo para *{t}*...", parse_mode="Markdown")
             msg = await self._generate_montecarlo_message(t)
             await status_m.edit_text(msg, parse_mode="Markdown")
@@ -1189,5 +1243,6 @@ INSTRUCCIONES DE RESPUESTA:
                 "• *'¿Por qué el test Diebold-Mariano rechaza la hipótesis nula?'*\n"
                 "• *'¿Cuál es el sesgo del mercado en BTC hoy?'*\n\n"
                 "💬 *Escribe tu duda y Gemini te responderá de inmediato.*",
-                parse_mode="Markdown"
+                parse_mode="Markdown",
+                reply_markup=self.build_persistent_reply_keyboard()
             )
