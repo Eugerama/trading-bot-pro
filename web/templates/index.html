@@ -381,24 +381,31 @@
                     <div id="tab-montecarlo" class="tab-content hidden pt-4 space-y-4">
                         <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800">
                             <div>
-                                <h4 class="text-sm font-bold text-white flex items-center gap-2">
-                                    <i class="fa-solid fa-dice-d20 text-purple-400"></i>
-                                    Simulación Estocástica de Trayectorias Futuras (Movimiento Browniano Geométrico)
-                                </h4>
-                                <p class="text-xs text-slate-400">1,000 caminos simulados para verificar la probabilidad de tocar Take Profit vs Stop Loss.</p>
+                                <div class="flex items-center gap-2">
+                                    <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                                        <i class="fa-solid fa-dice-d20 text-purple-400"></i>
+                                        Cono Estocástico Monte Carlo (GBM + Puente Browniano Intra-Vela)
+                                    </h4>
+                                    <span id="mc-side-badge" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                        EVALUANDO: BUY
+                                    </span>
+                                </div>
+                                <p class="text-xs text-slate-400 mt-0.5">
+                                    Últimas 24h reales (<code class="text-amber-300">T-23h a Hoy</code>) conectadas al abanico de 1,000 trayectorias (<code class="text-cyan-300">Bandas 90% P5–P95 y 50% P25–P75</code>).
+                                </p>
                             </div>
-                            <button onclick="loadMonteCarlo()" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold transition">
+                            <button onclick="loadMonteCarlo(true)" class="px-3 py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold transition">
                                 <i class="fa-solid fa-arrows-rotate mr-1"></i> Recalcular Monte Carlo
                             </button>
                         </div>
 
                         <!-- Gráfico Canvas de Monte Carlo -->
-                        <div class="h-[300px] w-full bg-slate-950 p-2 rounded-xl border border-slate-800">
+                        <div class="h-[340px] w-full bg-slate-950 p-3 rounded-xl border border-slate-800">
                             <canvas id="monteCarloChart"></canvas>
                         </div>
 
                         <!-- Métricas de Cola / Probabilidades -->
-                        <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
                             <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
                                 <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Probabilidad Take Profit</span>
                                 <span id="mc-prob-tp" class="text-lg font-bold text-emerald-400">--%</span>
@@ -414,6 +421,10 @@
                             <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center">
                                 <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Value at Risk (VaR 95%)</span>
                                 <span id="mc-var-95" class="text-lg font-bold text-amber-400">--%</span>
+                            </div>
+                            <div class="bg-slate-950/80 p-3 rounded-xl border border-slate-800 text-center col-span-2 md:col-span-1">
+                                <span class="text-[10px] text-slate-400 uppercase tracking-wider block">Expected Shortfall (CVaR 95%)</span>
+                                <span id="mc-cvar-95" class="text-lg font-bold text-rose-400">--%</span>
                             </div>
                         </div>
                     </div>
@@ -1621,47 +1632,136 @@
         // =====================================================================
         // 7. MONTE CARLO & VALIDACIÓN ML
         // =====================================================================
-        async function loadMonteCarlo() {
+        async function loadMonteCarlo(refresh = false) {
             try {
-                const res = await fetch(`/api/monte-carlo?ticker=${rawTicker}&sims=1000`);
+                const res = await fetch(`/api/monte-carlo?ticker=${rawTicker}&sims=1000&refresh=${refresh ? 1 : 0}`);
                 const data = await res.json();
 
                 document.getElementById('mc-prob-tp').innerText = `${(data.prob_take_profit * 100).toFixed(1)}%`;
                 document.getElementById('mc-prob-sl').innerText = `${(data.prob_stop_loss * 100).toFixed(1)}%`;
                 document.getElementById('mc-edge-ratio').innerText = `${data.edge_ratio}x`;
                 document.getElementById('mc-var-95').innerText = `${data.value_at_risk_95}%`;
+                const cvarEl = document.getElementById('mc-cvar-95');
+                if (cvarEl && data.conditional_var_95 !== undefined) {
+                    cvarEl.innerText = `${data.conditional_var_95}%`;
+                }
+
+                const sideBadge = document.getElementById('mc-side-badge');
+                if (sideBadge) {
+                    const isSell = (data.position_type || 'BUY') === 'SELL';
+                    sideBadge.innerText = isSell ? 'EVALUANDO: SHORT (SELL)' : 'EVALUANDO: LONG (BUY)';
+                    sideBadge.className = isSell
+                        ? 'px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                        : 'px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                }
 
                 const ctx = document.getElementById('monteCarloChart').getContext('2d');
                 if (monteCarloChartInstance) {
                     monteCarloChartInstance.destroy();
                 }
 
-                const labels = Array.from({length: data.time_horizon_bars + 1}, (_, i) => `T+${i}`);
+                // Conectar historia real previa (T-23h..Hoy) con el horizonte proyectado (T+1h..T+48h)
+                const histPrices = (data.historical_prices && data.historical_prices.length > 1)
+                    ? data.historical_prices
+                    : [data.entry_price];
+                const histLen = histPrices.length; // incluye T=0 al final
+                const preSteps = histLen - 1;      // pasos antes de T=0
+                const futureSteps = data.time_horizon_bars; // pasos después de T=0
+
+                const labels = [];
+                for (let i = preSteps; i >= 1; i--) {
+                    labels.push(`T-${i}h`);
+                }
+                labels.push('Hoy (T=0)');
+                for (let j = 1; j <= futureSteps; j++) {
+                    labels.push(`T+${j}h`);
+                }
+
+                const padFuture = (arr) => Array(preSteps).fill(null).concat(arr);
+                const histSeries = histPrices.concat(Array(futureSteps).fill(null));
+
                 const datasets = [];
 
+                // 0. Serie de Precio Histórico Real (T-23h a T=0)
+                datasets.push({
+                    label: 'Precio Real (Últimas 24h)',
+                    data: histSeries,
+                    borderColor: '#fbbf24',
+                    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+                    borderWidth: 2.5,
+                    pointRadius: 0,
+                    tension: 0.2,
+                    fill: false
+                });
+
+                // 1. Banda de Confianza 90% (P95 a P5)
+                datasets.push({
+                    label: 'Banda 90% (P5–P95)',
+                    data: padFuture(data.percentiles.p95),
+                    borderColor: 'rgba(56, 189, 248, 0.45)',
+                    backgroundColor: 'rgba(56, 189, 248, 0.10)',
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    fill: '+1'
+                });
+                datasets.push({
+                    label: '_hide_p5',
+                    data: padFuture(data.percentiles.p5),
+                    borderColor: 'rgba(56, 189, 248, 0.45)',
+                    backgroundColor: 'rgba(56, 189, 248, 0.10)',
+                    borderWidth: 1,
+                    borderDash: [3, 3],
+                    pointRadius: 0,
+                    fill: false
+                });
+
+                // 2. Banda Intercuartil 50% (P75 a P25)
+                datasets.push({
+                    label: 'Banda 50% IQR (P25–P75)',
+                    data: padFuture(data.percentiles.p75),
+                    borderColor: 'rgba(6, 182, 212, 0.65)',
+                    backgroundColor: 'rgba(6, 182, 212, 0.22)',
+                    borderWidth: 1.2,
+                    pointRadius: 0,
+                    fill: '+1'
+                });
+                datasets.push({
+                    label: '_hide_p25',
+                    data: padFuture(data.percentiles.p25),
+                    borderColor: 'rgba(6, 182, 212, 0.65)',
+                    backgroundColor: 'rgba(6, 182, 212, 0.22)',
+                    borderWidth: 1.2,
+                    pointRadius: 0,
+                    fill: false
+                });
+
+                // 3. Muestra de trayectorias GBM individuales
                 data.sample_paths.forEach((path, idx) => {
                     datasets.push({
-                        label: `Camino ${idx + 1}`,
-                        data: path,
-                        borderColor: 'rgba(100, 116, 139, 0.25)',
+                        label: idx === 0 ? 'Trayectorias GBM (Muestra)' : `_hide_path_${idx}`,
+                        data: padFuture(path),
+                        borderColor: 'rgba(148, 163, 184, 0.18)',
                         borderWidth: 1,
                         pointRadius: 0,
                         fill: false
                     });
                 });
 
+                // 4. Mediana Estocástica (P50)
                 datasets.push({
-                    label: 'Mediana (p50)',
-                    data: data.percentiles.p50,
-                    borderColor: '#06b6d4',
-                    borderWidth: 2.5,
+                    label: 'Mediana Proyectada (P50)',
+                    data: padFuture(data.percentiles.p50),
+                    borderColor: '#22d3ee',
+                    borderWidth: 2.6,
                     pointRadius: 0,
                     fill: false
                 });
 
+                // 5. Nivel Take Profit
                 datasets.push({
-                    label: 'Take Profit',
-                    data: Array(data.time_horizon_bars + 1).fill(data.take_profit),
+                    label: `Take Profit ($${Number(data.take_profit).toLocaleString()})`,
+                    data: padFuture(Array(futureSteps + 1).fill(data.take_profit)),
                     borderColor: '#10b981',
                     borderWidth: 2,
                     borderDash: [6, 4],
@@ -1669,9 +1769,10 @@
                     fill: false
                 });
 
+                // 6. Nivel Stop Loss
                 datasets.push({
-                    label: 'Stop Loss',
-                    data: Array(data.time_horizon_bars + 1).fill(data.stop_loss),
+                    label: `Stop Loss ($${Number(data.stop_loss).toLocaleString()})`,
+                    data: padFuture(Array(futureSteps + 1).fill(data.stop_loss)),
                     borderColor: '#f43f5e',
                     borderWidth: 2,
                     borderDash: [6, 4],
@@ -1685,10 +1786,47 @@
                     options: {
                         responsive: true,
                         maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top',
+                                labels: {
+                                    color: '#cbd5e1',
+                                    font: { size: 10 },
+                                    boxWidth: 14,
+                                    filter: (item) => !item.text.startsWith('_hide_')
+                                }
+                            },
+                            tooltip: {
+                                filter: (item) => !item.dataset.label.startsWith('_hide_')
+                            }
+                        },
                         scales: {
-                            x: { grid: { color: 'rgba(51, 65, 85, 0.3)' } },
-                            y: { grid: { color: 'rgba(51, 65, 85, 0.3)' } }
+                            x: {
+                                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                ticks: { color: '#94a3b8', maxTicksLimit: 12, font: { size: 10 } },
+                                title: {
+                                    display: true,
+                                    text: 'Horizonte Temporal (Últimas 24h Reales → 48h Proyección Estocástica GBM)',
+                                    color: '#94a3b8',
+                                    font: { size: 11, weight: 'bold' }
+                                }
+                            },
+                            y: {
+                                grid: { color: 'rgba(51, 65, 85, 0.3)' },
+                                ticks: {
+                                    color: '#94a3b8',
+                                    font: { size: 10 },
+                                    callback: (v) => '$' + Number(v).toLocaleString()
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Precio del Activo ($ USD)',
+                                    color: '#94a3b8',
+                                    font: { size: 11, weight: 'bold' }
+                                }
+                            }
                         }
                     }
                 });

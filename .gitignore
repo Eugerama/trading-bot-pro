@@ -22,6 +22,7 @@ logs/
 *.log
 *.pkl
 chat_id.txt
+trades_state.json
 chart_settings.json
 chart_settings.json.tmp
 

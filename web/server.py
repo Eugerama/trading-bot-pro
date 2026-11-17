@@ -392,6 +392,7 @@ async def api_monte_carlo(
     ticker: str = "BTCUSDT",
     sims: int = 1000,
     horizon: int = 48,
+    refresh: int = 0,
     user: str = Depends(get_current_user)
 ):
     """Ejecuta y retorna la simulación Monte Carlo completa con trayectorias."""
@@ -401,17 +402,32 @@ async def api_monte_carlo(
     df_ind = compute_all_indicators(df)
     atr = float(df_ind['atr_14'].iloc[-1])
 
-    risk = risk_manager.calculate_trade_parameters(
-        execution_engine.balance, current_price, atr, "BUY", ticker=clean_ticker, df=df
-    )
-    sl = risk['stop_loss']
-    tp = risk['take_profit']
+    # Usar la dirección y niveles reales si existe posición abierta o señal activa
+    active_pos = execution_engine.active_positions.get(clean_ticker)
+    if active_pos:
+        pos_side = active_pos.get("side", "BUY")
+        sl = float(active_pos.get("stop_loss", current_price * 0.97))
+        tp = float(active_pos.get("take_profit", current_price * 1.05))
+    else:
+        ml_pred = ml_engine.predict_latest(df, ticker=clean_ticker)
+        strat_eval = strategy.evaluate_signals(df, ml_pred, ticker=clean_ticker)
+        pos_side = strat_eval["signal"] if strat_eval["signal"] in ("BUY", "SELL") else (
+            ml_pred["signal"] if ml_pred.get("signal") in ("BUY", "SELL") else "BUY"
+        )
+        risk = risk_manager.calculate_trade_parameters(
+            execution_engine.balance, current_price, atr, pos_side, ticker=clean_ticker, df=df
+        )
+        sl = risk['stop_loss']
+        tp = risk['take_profit']
+
+    mc_seed = (int(time.time() * 1000) % 100000) if refresh else None
 
     mc_results = run_monte_carlo_simulation(
         df, current_price, sl, tp,
-        position_type="BUY",
+        position_type=pos_side,
         num_simulations=min(sims, 2000),
-        time_horizon_bars=horizon
+        time_horizon_bars=horizon,
+        seed=mc_seed
     )
     return mc_results
 

@@ -135,6 +135,11 @@ def run_monte_carlo_simulation(
     # Ratio de probabilidad (Edge del trade)
     edge_ratio = round(prob_tp / (prob_sl + 1e-5), 2)
 
+    # Últimas 24 velas históricas reales para conectar historia (T-23..T=0) con el cono (T=0..T+H)
+    hist_tail = [float(x) for x in df['close'].tail(24).tolist()] if len(df) > 0 else [float(entry_price)]
+    if hist_tail:
+        hist_tail[-1] = float(entry_price)
+
     return {
         "num_simulations": num_simulations,
         "time_horizon_bars": time_horizon_bars,
@@ -152,6 +157,7 @@ def run_monte_carlo_simulation(
         "expected_return": round(expected_trade_return * 100.0, 2),
         "value_at_risk_95": round(var_95 * 100.0, 2),
         "conditional_var_95": round(cvar_95 * 100.0, 2),
+        "historical_prices": [round(x, 4) for x in hist_tail],
         "percentiles": percentiles_over_time,
         "sample_paths": sample_paths,
         "summary": (
